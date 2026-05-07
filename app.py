@@ -448,13 +448,14 @@ TAIL_EVENTS = [
 ]
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📈 Retorno acumulado",
     "📉 Drawdown",
     "📊 Métricas",
     "🔄 Rebalanceamento",
     "🌐 Cenários",
     "⚡ Eventos de cauda",
+    "📦 Ativos individuais",
 ])
 
 # ── Tab 1: Retorno acumulado ──────────────────────────────────────────────────
@@ -481,31 +482,63 @@ with tab1:
                  for a in ASSET_CFG)
     eq_cum = (1 + eq_ret).cumprod() * 100
 
-    # ── Checkboxes ──
-    col_c1, col_c2, col_c3, col_c4 = st.columns(4)
-    show_cdi    = col_c1.checkbox("CDI",                value=True)
-    show_ibov   = col_c2.checkbox("Ibovespa",           value=True)
-    show_igual  = col_c3.checkbox("1/N igual",          value=False)
-    show_custom = col_c4.checkbox("Portfólio customizado", value=True)
+    # ── Filtro de período ──
+    periodos = {
+        "Mês passado": 1,
+        "3 meses":     3,
+        "12 meses":    12,
+        "24 meses":    24,
+        "36 meses":    36,
+        "5 anos":      60,
+        "10 anos":     120,
+        "Histórico completo": None,
+    }
+    pf_col, cb_col1, cb_col2, cb_col3, cb_col4 = st.columns([2,1,1,1,1])
+    periodo_sel = pf_col.selectbox("Período", list(periodos.keys()),
+                                    index=len(periodos)-1, key="periodo_acum",
+                                    label_visibility="collapsed")
+    show_cdi    = cb_col1.checkbox("CDI",                  value=True)
+    show_ibov   = cb_col2.checkbox("Ibovespa",             value=True)
+    show_igual  = cb_col3.checkbox("1/N igual",            value=False)
+    show_custom = cb_col4.checkbox("Portfólio customizado",value=True)
 
     if show_custom and not custom_valid:
         st.warning("⚠️ Os pesos na aba Rebalanceamento não somam 100%. Ajuste antes de comparar.")
 
+    # ── Aplicar filtro de período ──
+    n_meses = periodos[periodo_sel]
+    if n_meses is not None:
+        corte = common_idx[-1] - pd.DateOffset(months=n_meses)
+        idx_filtrado = common_idx[common_idx >= corte]
+    else:
+        idx_filtrado = common_idx
+
+    def rebase(series_cum, idx):
+        s = series_cum[series_cum.index.isin(idx)]
+        if len(s) == 0: return s
+        return (s / s.iloc[0]) * 100
+
+    port_f   = rebase(port_cum,   idx_filtrado)
+    cdi_f    = rebase(cdi_cum,    idx_filtrado)
+    ibov_f   = rebase(ibov_cum,   idx_filtrado)
+    eq_f     = rebase(eq_cum,     idx_filtrado)
+    custom_f = rebase(custom_cum, idx_filtrado) if custom_valid else None
+
     # ── Gráfico retorno acumulado ──
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=port_cum.index, y=port_cum.values.round(2),
+    fig.add_trace(go.Scatter(x=port_f.index, y=port_f.values.round(2),
         name="HRP+BL original", line=dict(color="#378ADD", width=2.5)))
     if show_cdi:
-        fig.add_trace(go.Scatter(x=cdi_cum.index, y=cdi_cum.values.round(2),
+        fig.add_trace(go.Scatter(x=cdi_f.index, y=cdi_f.values.round(2),
             name="CDI", line=dict(color="#1D9E75", width=1.5, dash="dot")))
     if show_ibov:
-        fig.add_trace(go.Scatter(x=ibov_cum.index, y=ibov_cum.values.round(2),
+        fig.add_trace(go.Scatter(x=ibov_f.index, y=ibov_f.values.round(2),
             name="Ibovespa", line=dict(color="#BA7517", width=1.5, dash="dash")))
     if show_igual:
-        fig.add_trace(go.Scatter(x=eq_cum.index, y=eq_cum.values.round(2),
+        fig.add_trace(go.Scatter(x=eq_f.index, y=eq_f.values.round(2),
             name="1/N igual", line=dict(color="#7F77DD", width=1.5, dash="longdash")))
-    if show_custom and custom_valid:
-        fig.add_trace(go.Scatter(x=custom_cum.index, y=custom_cum.values.round(2),
+    if show_custom and custom_valid and custom_f is not None:
+        fig.add_trace(go.Scatter(x=custom_f.index, y=custom_f.values.round(2),
             name="Portfólio customizado", line=dict(color="#E24B4A", width=2, dash="dashdot")))
 
     # ── Marcações de eventos de cauda ──
@@ -1046,6 +1079,173 @@ with tab6:
             f"<br><span style='font-size:12px;color:#888780'>{ev['desc']}</span></div></div>",
             unsafe_allow_html=True
         )
+
+
+
+# ── Tab 7: Ativos individuais ─────────────────────────────────────────────────
+with tab7:
+    st.markdown("Retorno acumulado de cada ativo da carteira de forma individual, "
+                "com marcações dos eventos de cauda e filtros de período.")
+
+    # ── Controles ──
+    ctrl1, ctrl2, ctrl3 = st.columns([2, 2, 2])
+
+    periodos_at = {
+        "Mês passado": 1, "3 meses": 3, "12 meses": 12,
+        "24 meses": 24, "36 meses": 36, "5 anos": 60,
+        "10 anos": 120, "Histórico completo": None,
+    }
+    periodo_at = ctrl1.selectbox("Período", list(periodos_at.keys()),
+                                  index=len(periodos_at)-1, key="periodo_at")
+
+    ativos_disponiveis = [a["name"] for a in ASSET_CFG]
+    ativos_sel = ctrl2.multiselect("Ativos", ativos_disponiveis,
+                                    default=ativos_disponiveis)
+
+    tipo_ev_at = ctrl3.multiselect("Tipo de evento", ["Doméstico", "Global"],
+                                    default=["Doméstico", "Global"], key="tipo_ev_at")
+
+    show_ev_at = st.checkbox("Marcar eventos de cauda no gráfico", value=True, key="ev_at")
+
+    if not ativos_sel:
+        st.warning("Selecione pelo menos um ativo.")
+        st.stop()
+
+    # ── Filtro de período ──
+    n_at = periodos_at[periodo_at]
+    if n_at is not None:
+        corte_at = common_idx[-1] - pd.DateOffset(months=n_at)
+        idx_at = common_idx[common_idx >= corte_at]
+    else:
+        idx_at = common_idx
+
+    # ── Construir séries rebased ──
+    fig_at = go.Figure()
+    for cfg in ASSET_CFG:
+        if cfg["name"] not in ativos_sel:
+            continue
+        s = series[cfg["name"]]["valor"].reindex(idx_at).ffill().dropna()
+        if len(s) == 0:
+            continue
+        s_rb = (s / s.iloc[0]) * 100
+        fig_at.add_trace(go.Scatter(
+            x=s_rb.index, y=s_rb.values.round(2),
+            name=cfg["name"],
+            line=dict(color=cfg["color"], width=2),
+            hovertemplate=f"<b>{cfg['name']}</b><br>%{{x|%b/%Y}}<br>%{{y:.1f}}<extra></extra>",
+        ))
+
+    # ── Marcações de eventos ──
+    if show_ev_at:
+        evs_at = [ev for ev in TAIL_EVENTS if ev["tipo"] in tipo_ev_at]
+        for ev in evs_at:
+            try:
+                ev_s = pd.Timestamp(ev["start"])
+                ev_e = pd.Timestamp(ev["end"])
+                if ev_s >= idx_at[0] and ev_s <= idx_at[-1]:
+                    fig_at.add_vrect(
+                        x0=ev_s, x1=ev_e,
+                        fillcolor=ev["color"], opacity=0.12,
+                        layer="below", line_width=0,
+                    )
+                    fig_at.add_annotation(
+                        x=ev_s, y=1.0, yref="paper",
+                        text=ev["name"], textangle=-90,
+                        showarrow=False,
+                        font=dict(size=9, color=ev["color"]),
+                        xanchor="right", yanchor="top",
+                        bgcolor="rgba(248,247,244,0.8)",
+                    )
+            except Exception:
+                pass
+
+    fig_at.update_layout(
+        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+        height=460, hovermode="x unified",
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0, r=40, t=8, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0, font=dict(color="#1a1a18")),
+        yaxis=dict(title="Base 100", gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+        xaxis=dict(gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+    )
+    st.plotly_chart(fig_at, use_container_width=True)
+    st.caption(f"Base 100 = primeiro dia do período selecionado ({idx_at[0].strftime('%d/%m/%Y')}). "
+               f"Retornos em frequência mensal.")
+
+    st.divider()
+
+    # ── Tabela de retornos por ativo no período ──
+    st.markdown("<div class='section-title'>retorno acumulado no período selecionado</div>",
+                unsafe_allow_html=True)
+
+    rows_at = []
+    for cfg in ASSET_CFG:
+        if cfg["name"] not in ativos_sel:
+            continue
+        s = series[cfg["name"]]["valor"].reindex(idx_at).ffill().dropna()
+        if len(s) < 2:
+            continue
+        ret_ac  = round((s.iloc[-1] / s.iloc[0] - 1) * 100, 2)
+        ret_mo  = s.pct_change().dropna()
+        vol_an  = round(ret_mo.std() * (12**0.5) * 100, 2)
+        rf_at   = cdi_aligned.reindex(idx_at).ffill()
+        sh = round((ret_mo.mean() - rf_at.mean()) / ret_mo.std() * (12**0.5), 3) if ret_mo.std() > 0 else None
+        cum_s   = (1 + ret_mo).cumprod()
+        dd_s    = (cum_s - cum_s.cummax()) / cum_s.cummax()
+        max_dd  = round(dd_s.min() * 100, 2)
+        rows_at.append({
+            "Ativo":            cfg["name"],
+            "Cluster":          cfg["cluster"],
+            "Retorno acum.":    f"{ret_ac:+.1f}%",
+            "Vol. a.a.":        f"{vol_an:.1f}%",
+            "Sharpe":           f"{sh:.3f}" if sh else "—",
+            "Max Drawdown":     f"{max_dd:.1f}%",
+            "Peso HRP+BL":      f"{cfg['w']*100:.1f}%",
+        })
+
+    if rows_at:
+        df_at = pd.DataFrame(rows_at)
+        st.dataframe(df_at, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── Performance de cada ativo nos eventos de cauda ──
+    st.markdown("<div class='section-title'>impacto dos eventos de cauda por ativo</div>",
+                unsafe_allow_html=True)
+
+    evs_tbl = [ev for ev in TAIL_EVENTS if ev["tipo"] in tipo_ev_at]
+    if evs_tbl and ativos_sel:
+        rows_imp = []
+        for ev in evs_tbl:
+            row_imp = {
+                "Evento":  ev["name"],
+                "Tipo":    ev["tipo"],
+                "Período": f"{pd.Timestamp(ev['start']).strftime('%d/%m/%Y')} → {pd.Timestamp(ev['end']).strftime('%d/%m/%Y')}",
+            }
+            for cfg in ASSET_CFG:
+                if cfg["name"] not in ativos_sel:
+                    continue
+                s_full = series[cfg["name"]]["valor"].reindex(common_idx).ffill()
+                s_cum_full = (s_full / s_full.iloc[0]) * 100
+                try:
+                    v0 = s_cum_full[s_cum_full.index <= pd.Timestamp(ev["start"])]
+                    v1 = s_cum_full[s_cum_full.index <= pd.Timestamp(ev["end"])]
+                    if len(v0) and len(v1):
+                        r = round((v1.iloc[-1] / v0.iloc[-1] - 1) * 100, 2)
+                        row_imp[cfg["name"]] = f"{r:+.1f}%"
+                    else:
+                        row_imp[cfg["name"]] = "—"
+                except Exception:
+                    row_imp[cfg["name"]] = "—"
+            rows_imp.append(row_imp)
+
+        df_imp = pd.DataFrame(rows_imp)
+        st.dataframe(df_imp, use_container_width=True, hide_index=True)
+    else:
+        st.info("Selecione ativos e tipos de eventos para ver o impacto.")
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
