@@ -364,10 +364,10 @@ with tab1:
         name="HRP+BL", marker_color="#378ADD"))
     fig2.add_trace(go.Bar(x=[str(y) for y in years],
         y=[ann_cdi[ann_cdi.index.year==y].values[0] for y in years if len(ann_cdi[ann_cdi.index.year==y])],
-        name="CDI", marker_color="#1D9E7566"))
+        name="CDI", marker_color="rgba(29,158,117,0.4)"))
     fig2.add_trace(go.Bar(x=[str(y) for y in years],
         y=[ann_ibov[ann_ibov.index.year==y].values[0] for y in years if len(ann_ibov[ann_ibov.index.year==y])],
-        name="Ibovespa", marker_color="#BA751744"))
+        name="Ibovespa", marker_color="rgba(186,117,23,0.3)"))
     fig2.update_layout(
         height=280, barmode="group", margin=dict(l=0,r=0,t=8,b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
