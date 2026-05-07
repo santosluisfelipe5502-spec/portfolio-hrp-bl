@@ -34,6 +34,14 @@ label,.stSlider label,.stCheckbox label,.stSelectbox label,
 .stTabs [aria-selected="true"]{color:#1a1a18 !important;font-weight:500 !important}
 [data-testid="stSelectbox"]>div>div{background:#ffffff !important;color:#1a1a18 !important;border:1px solid #e8e6e0 !important}
 [data-testid="stSelectbox"] svg{fill:#1a1a18 !important}
+[data-baseweb="popover"],[data-baseweb="menu"]{background:#ffffff !important}
+[data-baseweb="popover"] *,[data-baseweb="menu"] *{color:#1a1a18 !important;background:#ffffff !important}
+[data-baseweb="option"]{background:#ffffff !important;color:#1a1a18 !important}
+[data-baseweb="option"]:hover{background:#f8f7f4 !important;color:#1a1a18 !important}
+li[role="option"]{background:#ffffff !important;color:#1a1a18 !important}
+li[role="option"]:hover{background:#f8f7f4 !important}
+ul[role="listbox"]{background:#ffffff !important}
+ul[role="listbox"] li{color:#1a1a18 !important}
 [data-testid="stMetricLabel"] p{color:#888780 !important;font-size:13px !important}
 [data-testid="stMetricValue"]{color:#1a1a18 !important}
 [data-testid="stMarkdownContainer"] p{color:#1a1a18 !important}
