@@ -21,6 +21,16 @@ st.markdown("""
 <style>
 [data-testid="stAppViewContainer"]{background:#f8f7f4}
 [data-testid="stSidebar"]{background:#ffffff;border-right:1px solid #e8e6e0}
+[data-testid="stSidebar"] *{color:#1a1a18 !important}
+[data-testid="stSidebar"] .stMarkdown p{color:#444441 !important}
+[data-testid="stSidebar"] label{color:#1a1a18 !important;font-size:13px !important}
+[data-testid="stSidebar"] small{color:#888780 !important}
+[data-testid="stSidebar"] h3{color:#1a1a18 !important;font-size:16px !important}
+[data-testid="stSidebar"] hr{border-color:#e8e6e0 !important}
+.stCheckbox label{color:#1a1a18 !important;font-size:13px !important}
+.stCheckbox span{color:#1a1a18 !important}
+.stTabs [data-baseweb="tab"]{color:#444441 !important}
+.stTabs [aria-selected="true"]{color:#1a1a18 !important;font-weight:500 !important}
 .metric-card{background:#fff;border:1px solid #e8e6e0;border-radius:10px;padding:16px 20px;margin-bottom:8px}
 .metric-label{font-size:11px;color:#888780;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
 .metric-value{font-size:26px;font-weight:500;color:#1a1a18;line-height:1.1}
