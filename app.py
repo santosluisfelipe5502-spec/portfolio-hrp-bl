@@ -128,20 +128,68 @@ def fetch_cdi():
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_ptax():
-    """Busca PTAX mensal (fechamento USD/BRL) via API do Banco Central (SGS 1)."""
+    """Busca PTAX mensal (fechamento USD/BRL) via API do Banco Central.
+    Tenta múltiplas séries e endpoints para maior robustez.
+    """
+    # Estratégia 1: SGS 3698 — USD/BRL mensal (média)
+    # Estratégia 2: SGS 1 — USD/BRL diário, agrega para mensal
+    # Estratégia 3: PTAX Olinda API
+    strategies = [
+        ("SGS 3698", "https://api.bcb.gov.br/dados/serie/bcdata.sgs.3698/dados?formato=json", "mensal"),
+        ("SGS 1",    "https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados?formato=json",    "diario"),
+    ]
+
+    for nome, url, freq in strategies:
+        try:
+            r = requests.get(url, timeout=20)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            if not data:
+                continue
+            df = pd.DataFrame(data)
+            # Tratar vírgula decimal (padrão BCB)
+            df["valor"] = df["valor"].astype(str).str.replace(",", ".").astype(float)
+            df["data"]  = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
+            df = df.dropna(subset=["data","valor"]).set_index("data").sort_index()
+
+            if freq == "diario":
+                # Agregar para mensal usando último valor do mês
+                df = df.resample("ME").last()
+            else:
+                df.index = df.index + pd.offsets.MonthEnd(0)
+
+            df["retorno"] = df["valor"].pct_change()
+            if len(df) > 12:
+                return df
+        except Exception:
+            continue
+
+    # Estratégia 3: Olinda PTAX API (endpoint diferente)
     try:
-        url = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados?formato=json"
-        r = requests.get(url, timeout=15)
-        df = pd.DataFrame(r.json())
-        df["data"]  = pd.to_datetime(df["data"], dayfirst=True) + pd.offsets.MonthEnd(0)
-        df["valor"] = df["valor"].astype(float)
-        df = df.set_index("data").sort_index()
-        # Retorno mensal da taxa de câmbio
-        df["retorno"] = df["valor"].pct_change()
-        return df
-    except Exception as e:
-        st.warning(f"Não foi possível buscar a PTAX automaticamente: {e}")
-        return None
+        import json
+        url_olinda = (
+            "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
+            "CotacaoMoedaMensal(codigoMoeda=@codigoMoeda,competenciaInicio=@competenciaInicio,"
+            "competenciaFim=@competenciaFim)?@codigoMoeda='USD'"
+            "&@competenciaInicio='01-2005'&@competenciaFim='12-2026'"
+            "&$format=json&$select=cotacaoCompra,dataHoraCotacao"
+        )
+        r = requests.get(url_olinda, timeout=20)
+        if r.status_code == 200:
+            data = r.json().get("value", [])
+            if data:
+                df = pd.DataFrame(data)
+                df["data"]  = pd.to_datetime(df["dataHoraCotacao"], errors="coerce") + pd.offsets.MonthEnd(0)
+                df["valor"] = pd.to_numeric(df["cotacaoCompra"], errors="coerce")
+                df = df.dropna().set_index("data").sort_index()[["valor"]]
+                df["retorno"] = df["valor"].pct_change()
+                if len(df) > 12:
+                    return df
+    except Exception:
+        pass
+
+    return None
 
 def read_uploaded(file):
     """Lê XLS/XLSX/CSV em DataFrame com duas colunas: data, valor."""
