@@ -7,6 +7,40 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from datetime import datetime, date
 import io, warnings
+
+# ── Layout padrão Plotly ─────────────────────────────────────────────────────
+PLOTLY_LAYOUT = dict(
+    plot_bgcolor="#f8f7f4",
+    paper_bgcolor="#f8f7f4",
+    font=dict(color="#1a1a18", size=12),
+    xaxis=dict(
+        color="#1a1a18",
+        tickfont=dict(color="#444441", size=11),
+        titlefont=dict(color="#444441"),
+        gridcolor="#e8e6e0",
+        linecolor="#e8e6e0",
+        zerolinecolor="#c8c6c0",
+    ),
+    yaxis=dict(
+        color="#1a1a18",
+        tickfont=dict(color="#444441", size=11),
+        titlefont=dict(color="#444441"),
+        gridcolor="#e8e6e0",
+        linecolor="#e8e6e0",
+        zerolinecolor="#c8c6c0",
+    ),
+    legend=dict(
+        font=dict(color="#1a1a18", size=12),
+        bgcolor="rgba(0,0,0,0)",
+        bordercolor="rgba(0,0,0,0)",
+    ),
+    hoverlabel=dict(
+        font=dict(color="#1a1a18"),
+        bgcolor="#ffffff",
+        bordercolor="#e8e6e0",
+    ),
+    margin=dict(l=0, r=0, t=8, b=0),
+)
 warnings.filterwarnings("ignore")
 
 st.set_page_config(
@@ -368,8 +402,7 @@ with tab1:
         fig.add_trace(go.Scatter(x=eq_cum.index, y=eq_cum.values.round(2),
             name="1/N igual", line=dict(color="#7F77DD", width=1.2, dash="longdash")))
 
-    fig.update_layout(
-        height=340, margin=dict(l=0,r=0,t=8,b=0),
+    fig.update_layout(**PLOTLY_LAYOUT, height=340, margin=dict(l=0,r=0,t=8,b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
         yaxis=dict(tickprefix="R$", gridcolor="#e8e6e0"),
@@ -395,7 +428,7 @@ with tab1:
     fig2.add_trace(go.Bar(x=[str(y) for y in years],
         y=[ann_ibov[ann_ibov.index.year==y].values[0] for y in years if len(ann_ibov[ann_ibov.index.year==y])],
         name="Ibovespa", marker_color="rgba(186,117,23,0.3)"))
-    fig2.update_layout(
+    fig2.update_layout(**PLOTLY_LAYOUT, 
         height=280, barmode="group", margin=dict(l=0,r=0,t=8,b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
@@ -417,7 +450,7 @@ with tab2:
         name="Ibovespa", fill="tozeroy",
         line=dict(color="#E24B4A", width=1.2, dash="dot"),
         fillcolor="rgba(226,75,74,0.08)"))
-    fig_dd.update_layout(
+    fig_dd.update_layout(**PLOTLY_LAYOUT, 
         height=320, margin=dict(l=0,r=0,t=8,b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
@@ -503,7 +536,7 @@ with tab4:
         ))
     fig_drift.add_hline(y=banda,  line_dash="dot", line_color="#888780", annotation_text=f"+{banda:.1f}% banda")
     fig_drift.add_hline(y=-banda, line_dash="dot", line_color="#888780", annotation_text=f"-{banda:.1f}% banda")
-    fig_drift.update_layout(
+    fig_drift.update_layout(**PLOTLY_LAYOUT, 
         height=260, margin=dict(l=0,r=0,t=8,b=0),
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
         yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0", zeroline=True, zerolinecolor="#B4B2A9"),
@@ -585,7 +618,7 @@ with tab5:
     ))
     fig_sc.add_hline(y=selic, line_dash="dot", line_color="#1D9E75",
                      annotation_text=f"Selic {selic:.2f}%", annotation_font_color="#1D9E75")
-    fig_sc.update_layout(
+    fig_sc.update_layout(**PLOTLY_LAYOUT, 
         height=280, margin=dict(l=0,r=0,t=8,b=0),
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
         yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0"),
