@@ -434,13 +434,10 @@ with tab1:
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
         font=dict(color="#1a1a18"),
         margin=dict(l=0,r=0,t=8,b=0),
-        legend=dict(font=dict(color="#1a1a18"), bgcolor="rgba(0,0,0,0)"),
-        xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
-        yaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"), 
         height=280, barmode="group",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0"),
-        xaxis=dict(gridcolor="#e8e6e0"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color="#1a1a18")),
+        xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
     st.plotly_chart(fig2, use_container_width=True)
 
@@ -465,9 +462,6 @@ with tab2:
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
         yaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"), 
         height=320,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0"),
-        xaxis=dict(gridcolor="#e8e6e0"),
     )
     st.plotly_chart(fig_dd, use_container_width=True)
 
@@ -556,7 +550,6 @@ with tab4:
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
         yaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"), 
         height=260,
-        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0", zeroline=True, zerolinecolor="#B4B2A9"),
     )
     st.plotly_chart(fig_drift, use_container_width=True)
 
@@ -643,7 +636,6 @@ with tab5:
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
         yaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"), 
         height=280,
-        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0"),
     )
     st.plotly_chart(fig_sc, use_container_width=True)
 
