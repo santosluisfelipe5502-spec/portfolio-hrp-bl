@@ -126,6 +126,23 @@ def fetch_cdi():
         st.warning(f"Não foi possível buscar o CDI automaticamente: {e}")
         return None
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_ptax():
+    """Busca PTAX mensal (fechamento USD/BRL) via API do Banco Central (SGS 1)."""
+    try:
+        url = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados?formato=json"
+        r = requests.get(url, timeout=15)
+        df = pd.DataFrame(r.json())
+        df["data"]  = pd.to_datetime(df["data"], dayfirst=True) + pd.offsets.MonthEnd(0)
+        df["valor"] = df["valor"].astype(float)
+        df = df.set_index("data").sort_index()
+        # Retorno mensal da taxa de câmbio
+        df["retorno"] = df["valor"].pct_change()
+        return df
+    except Exception as e:
+        st.warning(f"Não foi possível buscar a PTAX automaticamente: {e}")
+        return None
+
 def read_uploaded(file):
     """Lê XLS/XLSX/CSV em DataFrame com duas colunas: data, valor."""
     name = file.name.lower()
@@ -154,10 +171,22 @@ def read_uploaded(file):
 def to_monthly(df):
     return df.resample("ME").last()
 
-def calc_intl(spy_df, tlt_df, w_spy=0.40, w_tlt=0.60):
+def calc_intl(spy_df, tlt_df, w_spy=0.40, w_tlt=0.60, ptax_df=None):
+    """Calcula índice Internacional combinado.
+    Se ptax_df for fornecido, converte retornos USD → BRL via PTAX.
+    """
     df = pd.concat([spy_df.rename(columns={"valor":"SPY"}),
                     tlt_df.rename(columns={"valor":"TLT"})], axis=1).dropna()
-    ret = w_spy * df["SPY"].pct_change() + w_tlt * df["TLT"].pct_change()
+    ret_usd = w_spy * df["SPY"].pct_change() + w_tlt * df["TLT"].pct_change()
+
+    if ptax_df is not None:
+        # Alinhar PTAX ao mesmo índice e converter USD → BRL
+        ptax_ret = ptax_df["retorno"].reindex(ret_usd.index).ffill().fillna(0)
+        ret_brl  = (1 + ret_usd) * (1 + ptax_ret) - 1
+        ret = ret_brl
+    else:
+        ret = ret_usd
+
     idx = (1 + ret).cumprod() * 100
     idx.iloc[0] = 100
     return idx.rename("valor").to_frame()
@@ -228,6 +257,11 @@ with st.sidebar:
     st.markdown("**Internacional** (40% SPY + 60% TLT)")
     spy_file = st.file_uploader("SPY",     type=["csv","xls","xlsx"], key="SPY")
     tlt_file = st.file_uploader("TLT",     type=["csv","xls","xlsx"], key="TLT")
+    st.markdown("**PTAX (USD/BRL)** — conversão cambial")
+    use_auto_ptax = st.toggle("Buscar PTAX automaticamente (BCB)", value=True)
+    ptax_file = None
+    if not use_auto_ptax:
+        ptax_file = st.file_uploader("Upload PTAX (CSV/Excel)", type=["csv","xls","xlsx"], key="ptax")
 
     st.divider()
     st.markdown("#### Período de análise")
@@ -297,6 +331,26 @@ with st.spinner("Carregando dados…"):
                 continue
         series[cfg["name"]] = demo[cfg["name"]]
 
+    # PTAX — buscar automaticamente ou via upload
+    ptax_data = None
+    if use_auto_ptax:
+        ptax_data = fetch_ptax()
+        if ptax_data is not None:
+            ptax_src = "📡 PTAX via BCB"
+        else:
+            ptax_src = "⚠️ PTAX indisponível — usando USD puro"
+    elif ptax_file:
+        ptax_raw = read_uploaded(ptax_file)
+        if ptax_raw is not None:
+            ptax_raw.index = ptax_raw.index + pd.offsets.MonthEnd(0)
+            ptax_raw["retorno"] = ptax_raw["valor"].pct_change()
+            ptax_data = ptax_raw
+            ptax_src = "📂 PTAX local"
+        else:
+            ptax_src = "⚠️ PTAX não carregada — usando USD puro"
+    else:
+        ptax_src = "⚠️ PTAX desabilitada — usando USD puro"
+
     # Internacional
     if spy_file and tlt_file:
         spy_df = read_uploaded(spy_file)
@@ -304,7 +358,7 @@ with st.spinner("Carregando dados…"):
         if spy_df is not None and tlt_df is not None:
             spy_m = to_monthly(spy_df)
             tlt_m = to_monthly(tlt_df)
-            series["Internac."] = calc_intl(spy_m, tlt_m, spy_w, tlt_w)
+            series["Internac."] = calc_intl(spy_m, tlt_m, spy_w, tlt_w, ptax_data)
             has_real = True
     else:
         series["Internac."] = demo["Internac."]
@@ -335,7 +389,8 @@ with col_h1:
     </h2>
     <p style='margin:4px 0 0;font-size:13px;color:#888780'>
         {common_idx[0].strftime('%b/%Y')} → {common_idx[-1].strftime('%b/%Y')} &nbsp;·&nbsp;
-        {len(common_idx)} meses &nbsp;·&nbsp; {data_src} &nbsp;·&nbsp; {real_tag}
+        {len(common_idx)} meses &nbsp;·&nbsp; {data_src} &nbsp;·&nbsp;
+        {ptax_src} &nbsp;·&nbsp; {real_tag}
     </p>
     """, unsafe_allow_html=True)
 with col_h2:
