@@ -359,8 +359,11 @@ def kpi(label, value, sub="", cls=""):
         <div class='metric-sub'>{sub}</div>
     </div>"""
 
+# ── Linha 1: HRP+BL original ──
+st.markdown("<div style='font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;"
+            "color:#378ADD;margin-bottom:6px'>HRP + Black-Litterman</div>", unsafe_allow_html=True)
 k1,k2,k3,k4,k5,k6 = st.columns(6)
-k1.markdown(kpi("Acumulado HRP+BL", f"+{acum_port:.1f}%", f"CDI +{acum_cdi:.1f}%", "pos"), unsafe_allow_html=True)
+k1.markdown(kpi("Acumulado", f"+{acum_port:.1f}%", f"CDI +{acum_cdi:.1f}%", "pos"), unsafe_allow_html=True)
 k2.markdown(kpi("Retorno a.a.", f"{m_port['ann_ret']*100:.2f}%", f"IBOV {m_port['ann_ret']*100 - m_ibov['ann_ret']*100:+.1f}%"), unsafe_allow_html=True)
 cls_sharpe = "pos" if m_port["sharpe"] > 0.2 else "warn" if m_port["sharpe"] > 0 else "neg"
 k3.markdown(kpi("Sharpe (rf=CDI)", f"{m_port['sharpe']:.3f}", f"IBOV {m_ibov['sharpe']:.3f}", cls_sharpe), unsafe_allow_html=True)
@@ -368,6 +371,54 @@ cls_sort = "pos" if m_port["sortino"] and m_port["sortino"] > 0.3 else "warn"
 k4.markdown(kpi("Sortino", f"{m_port['sortino']:.3f}" if m_port["sortino"] else "—", "penaliza só quedas", cls_sort), unsafe_allow_html=True)
 k5.markdown(kpi("Max Drawdown", f"{m_port['max_dd']*100:.2f}%", f"IBOV {m_ibov['max_dd']*100:.1f}%", "warn"), unsafe_allow_html=True)
 k6.markdown(kpi("Calmar ratio", f"{m_port['calmar']:.3f}", f"IBOV {m_ibov['calmar']:.3f}", "pos"), unsafe_allow_html=True)
+
+# ── Linha 2: Portfólio customizado ──
+custom_w_hdr = {}
+for cfg in ASSET_CFG:
+    key = f"rebal_{cfg['name']}"
+    custom_w_hdr[cfg["name"]] = st.session_state.get(key, cfg["w"] * 100) / 100
+total_cw_hdr = sum(custom_w_hdr.values())
+custom_valid_hdr = abs(total_cw_hdr - 1.0) < 0.02
+
+if custom_valid_hdr:
+    c_ret = sum(
+        custom_w_hdr[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+        for a in ASSET_CFG
+    )
+    c_cum = (1 + c_ret).cumprod() * 100
+    m_cust = metrics(c_ret, cdi_aligned)
+    acum_cust = (c_cum.iloc[-1] / 100 - 1) * 100
+
+    st.markdown("<div style='font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;"
+                "color:#E24B4A;margin:8px 0 6px'>Portfólio customizado</div>", unsafe_allow_html=True)
+    ck1,ck2,ck3,ck4,ck5,ck6 = st.columns(6)
+    diff_acum = acum_cust - acum_port
+    ck1.markdown(kpi("Acumulado", f"+{acum_cust:.1f}%",
+        f"{'↑' if diff_acum>=0 else '↓'} {diff_acum:+.1f}% vs HRP+BL",
+        "pos" if acum_cust >= acum_port else "warn"), unsafe_allow_html=True)
+    diff_ret = (m_cust["ann_ret"] - m_port["ann_ret"])*100
+    ck2.markdown(kpi("Retorno a.a.", f"{m_cust['ann_ret']*100:.2f}%",
+        f"{diff_ret:+.1f}% vs HRP+BL",
+        "pos" if diff_ret >= 0 else "warn"), unsafe_allow_html=True)
+    cls_cs = "pos" if m_cust["sharpe"] > 0.2 else "warn" if m_cust["sharpe"] > 0 else "neg"
+    diff_sh = m_cust["sharpe"] - m_port["sharpe"]
+    ck3.markdown(kpi("Sharpe (rf=CDI)", f"{m_cust['sharpe']:.3f}",
+        f"{diff_sh:+.3f} vs HRP+BL", cls_cs), unsafe_allow_html=True)
+    cls_cso = "pos" if m_cust["sortino"] and m_cust["sortino"] > 0.3 else "warn"
+    ck4.markdown(kpi("Sortino", f"{m_cust['sortino']:.3f}" if m_cust["sortino"] else "—",
+        "penaliza só quedas", cls_cso), unsafe_allow_html=True)
+    diff_dd = m_cust["max_dd"]*100 - m_port["max_dd"]*100
+    ck5.markdown(kpi("Max Drawdown", f"{m_cust['max_dd']*100:.2f}%",
+        f"{diff_dd:+.1f}% vs HRP+BL",
+        "pos" if diff_dd >= 0 else "warn"), unsafe_allow_html=True)
+    diff_cal = m_cust["calmar"] - m_port["calmar"]
+    ck6.markdown(kpi("Calmar ratio", f"{m_cust['calmar']:.3f}",
+        f"{diff_cal:+.3f} vs HRP+BL",
+        "pos" if diff_cal >= 0 else "warn"), unsafe_allow_html=True)
+else:
+    st.markdown("<div style='font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;"
+                "color:#888780;margin:8px 0 6px'>Portfólio customizado — ajuste os pesos na aba Rebalanceamento</div>",
+                unsafe_allow_html=True)
 
 st.divider()
 
@@ -687,6 +738,15 @@ with tab4:
 with tab5:
     st.markdown("Simule o impacto de cenários macroeconômicos nos retornos esperados do portfólio.")
 
+    # ── Período da amostra ──
+    periodo_str = f"{common_idx[0].strftime('%d/%m/%Y')} → {common_idx[-1].strftime('%d/%m/%Y')} · {len(common_idx)} meses"
+    st.markdown(
+        f"<div style='display:inline-flex;align-items:center;gap:6px;font-size:12px;"
+        f"background:#E6F1FB;color:#185FA5;padding:3px 12px;border-radius:12px;margin-bottom:1rem'>"
+        f"📅 Amostra histórica: <strong>{periodo_str}</strong></div>",
+        unsafe_allow_html=True
+    )
+
     preset = st.selectbox("Cenário pré-definido", [
         "Base", "Juro alto", "Recessão", "Rali de risco", "Customizado"
     ])
@@ -705,6 +765,7 @@ with tab5:
     pib   = c3.slider("PIB (% a.a.)",  -5.0,  8.0, p["pib"],   0.25)
     fx    = c4.slider("USD/BRL",         4.0,  8.0, p["fx"],    0.1)
 
+    # ── Retornos esperados por ativo ──
     asset_rets = {
         "IDA Pré":   max(0, selic * 0.85 - max(0, (selic-12)*0.6)),
         "IMA":       selic*0.6 + ipca*0.4 + (1.5 if selic > 13 else 0),
@@ -713,42 +774,117 @@ with tab5:
         "Ibovespa":  8 + pib*2.5 - max(0,(selic-12)*0.8) + (-2 if fx > 5.5 else 1),
         "Internac.": 10 + (3 if fx > 5.5 else -2) + (1 if pib > 2 else -1),
     }
-    port_ret_sc = sum(WEIGHTS[k] * v for k, v in asset_rets.items())
-    premium_sc  = port_ret_sc - selic
-    sharpe_sc   = premium_sc / (m_port["ann_vol"] * 100)
 
+    # ── Pesos customizados ──
+    custom_w_sc = {}
+    for cfg in ASSET_CFG:
+        key = f"rebal_{cfg['name']}"
+        custom_w_sc[cfg["name"]] = st.session_state.get(key, cfg["w"] * 100) / 100
+    total_cw_sc = sum(custom_w_sc.values())
+    custom_valid_sc = abs(total_cw_sc - 1.0) < 0.02
+
+    # ── Retornos totais ponderados ──
+    port_ret_sc    = sum(WEIGHTS[k] * v for k, v in asset_rets.items())
+    custom_ret_sc  = sum(custom_w_sc[k] * v for k, v in asset_rets.items()) if custom_valid_sc else None
+    equal_ret_sc   = sum((1/6) * v for v in asset_rets.values())
+    premium_sc     = port_ret_sc - selic
+    sharpe_sc      = premium_sc / (m_port["ann_vol"] * 100)
+
+    # ── KPIs comparativos ──
     st.divider()
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Retorno esperado HRP+BL", f"{port_ret_sc:.2f}%", delta=f"{premium_sc:+.2f}% vs Selic")
-    m2.metric("Prêmio sobre CDI",        f"{premium_sc:+.2f}%",  delta="positivo" if premium_sc > 0 else "negativo")
-    m3.metric("Vol. estimada",           f"{m_port['ann_vol']*100:.1f}%")
-    m4.metric("Sharpe projetado",        f"{sharpe_sc:.3f}")
+    st.markdown("<div class='section-title'>retorno total ponderado — comparativo de carteiras</div>", unsafe_allow_html=True)
+    kc1, kc2, kc3, kc4, kc5 = st.columns(5)
+    kc1.metric("HRP+BL",     f"{port_ret_sc:.2f}%",   delta=f"{port_ret_sc-selic:+.2f}% vs CDI")
+    kc2.metric("CDI (Selic)", f"{selic:.2f}%",          delta="benchmark")
+    kc3.metric("Ibovespa",   f"{asset_rets['Ibovespa']:.2f}%", delta=f"{asset_rets['Ibovespa']-selic:+.2f}% vs CDI")
+    kc4.metric("1/N igual",  f"{equal_ret_sc:.2f}%",   delta=f"{equal_ret_sc-selic:+.2f}% vs CDI")
+    if custom_valid_sc:
+        kc5.metric("Customizado", f"{custom_ret_sc:.2f}%", delta=f"{custom_ret_sc-selic:+.2f}% vs CDI")
+    else:
+        kc5.metric("Customizado", "—", delta="ajuste os pesos")
 
-    st.markdown("<div class='section-title'>Retorno esperado por ativo neste cenário</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'>sharpe e vol estimados</div>", unsafe_allow_html=True)
+    ks1, ks2, ks3, ks4 = st.columns(4)
+    ks1.metric("Sharpe HRP+BL",    f"{sharpe_sc:.3f}")
+    ks2.metric("Vol. HRP+BL",      f"{m_port['ann_vol']*100:.1f}%")
+    if custom_valid_sc:
+        sharpe_cust = (custom_ret_sc - selic) / (m_port["ann_vol"] * 100)
+        ks3.metric("Sharpe Customizado", f"{sharpe_cust:.3f}")
+    ks4.metric("Vol. Ibovespa",    f"{m_ibov['ann_vol']*100:.1f}%")
+
+    # ── Gráfico duplo: HRP+BL vs Customizado por ativo ──
+    st.divider()
+    st.markdown("<div class='section-title'>retorno esperado por ativo — HRP+BL vs customizado</div>", unsafe_allow_html=True)
+
+    ativos    = list(asset_rets.keys())
+    rets_vals = [round(v, 2) for v in asset_rets.values()]
+    colors    = [COLORS[k] for k in ativos]
+
     fig_sc = go.Figure()
     fig_sc.add_trace(go.Bar(
-        x=list(asset_rets.keys()),
-        y=[round(v,2) for v in asset_rets.values()],
-        marker_color=[COLORS[k] for k in asset_rets],
-        showlegend=False,
+        x=ativos, y=rets_vals,
+        name="Retorno esperado (ativo)",
+        marker_color=colors,
+        showlegend=True,
     ))
+
+    # Linha de peso HRP+BL
+    fig_sc.add_trace(go.Scatter(
+        x=ativos,
+        y=[round(WEIGHTS[k]*100, 1) for k in ativos],
+        name="Peso HRP+BL (%)",
+        mode="lines+markers",
+        line=dict(color="#378ADD", width=2, dash="dot"),
+        marker=dict(size=8),
+        yaxis="y2",
+    ))
+
+    if custom_valid_sc:
+        fig_sc.add_trace(go.Scatter(
+            x=ativos,
+            y=[round(custom_w_sc[k]*100, 1) for k in ativos],
+            name="Peso Customizado (%)",
+            mode="lines+markers",
+            line=dict(color="#E24B4A", width=2, dash="dashdot"),
+            marker=dict(size=8),
+            yaxis="y2",
+        ))
+
     fig_sc.add_hline(y=selic, line_dash="dot", line_color="#1D9E75",
-                     annotation_text=f"Selic {selic:.2f}%", annotation_font_color="#1D9E75")
+                     annotation_text=f"Selic {selic:.2f}%",
+                     annotation_font_color="#1D9E75",
+                     annotation_position="right")
+
     fig_sc.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
         font=dict(color="#1a1a18"),
-        margin=dict(l=0,r=0,t=8,b=0),
-        legend=dict(font=dict(color="#1a1a18"), bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=0, r=60, t=8, b=0),
+        height=340,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color="#1a1a18")),
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
-        yaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"), 
-        height=280,
+        yaxis=dict(title="Retorno esperado (%)", ticksuffix="%",
+                   gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+        yaxis2=dict(title="Peso na carteira (%)", ticksuffix="%",
+                    overlaying="y", side="right",
+                    tickfont=dict(color="#444441", size=11), color="#1a1a18",
+                    showgrid=False, range=[0, 50]),
+        barmode="group",
     )
     st.plotly_chart(fig_sc, use_container_width=True)
+    st.caption("Barras = retorno esperado de cada ativo no cenário. Linhas = peso de cada carteira (eixo direito).")
 
+    # ── Alerta final ──
+    st.divider()
     if premium_sc > 0:
-        st.success(f"✅ Neste cenário o portfólio supera o CDI em **{premium_sc:.2f}%** a.a.")
+        st.success(f"✅ HRP+BL supera o CDI em **{premium_sc:.2f}%** a.a. neste cenário.")
     else:
-        st.warning(f"⚠️ Neste cenário o CDI supera o portfólio em **{abs(premium_sc):.2f}%** a.a. Considere revisar as visões no Black-Litterman.")
+        st.warning(f"⚠️ CDI supera o HRP+BL em **{abs(premium_sc):.2f}%** a.a. Considere revisar as visões no Black-Litterman.")
+    if custom_valid_sc and custom_ret_sc is not None:
+        diff_cust = custom_ret_sc - port_ret_sc
+        if diff_cust >= 0:
+            st.info(f"📊 Portfólio customizado supera o HRP+BL em **{diff_cust:+.2f}%** a.a. neste cenário.")
+        else:
+            st.info(f"📊 Portfólio customizado fica **{diff_cust:.2f}%** abaixo do HRP+BL neste cenário.")
 
 
 # ── Tab 6: Eventos de cauda ───────────────────────────────────────────────────
@@ -803,7 +939,7 @@ with tab6:
         row = {
             "Evento":   ev["name"],
             "Tipo":     ev["tipo"],
-            "Período":  f"{ev['start'][2:7]} → {ev['end'][2:7]}",
+            "Período":  f"{pd.Timestamp(ev['start']).strftime('%d/%m/%Y')} → {pd.Timestamp(ev['end']).strftime('%d/%m/%Y')}",
             "HRP+BL":   f"{r_hrp:+.1f}%" if r_hrp is not None else "—",
             "CDI":      f"{r_cdi:+.1f}%"  if r_cdi  is not None else "—",
             "Ibovespa": f"{r_ibov:+.1f}%" if r_ibov is not None else "—",
