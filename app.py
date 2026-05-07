@@ -22,31 +22,40 @@ st.markdown("""
 [data-testid="stAppViewContainer"]{background:#f8f7f4}
 [data-testid="stSidebar"]{background:#ffffff;border-right:1px solid #e8e6e0}
 [data-testid="stSidebar"] *{color:#1a1a18 !important}
-[data-testid="stSidebar"] .stMarkdown p{color:#444441 !important}
-[data-testid="stSidebar"] label{color:#1a1a18 !important;font-size:13px !important}
 [data-testid="stSidebar"] small{color:#888780 !important}
-[data-testid="stSidebar"] h3{color:#1a1a18 !important;font-size:16px !important}
 [data-testid="stSidebar"] hr{border-color:#e8e6e0 !important}
-.stCheckbox label{color:#1a1a18 !important;font-size:13px !important}
-.stCheckbox span{color:#1a1a18 !important}
+body,p,span,div,label{color:#1a1a18}
+label,.stSlider label,.stCheckbox label,.stSelectbox label,
+.stFileUploader label,.stDateInput label,.stNumberInput label,
+.stToggle label,[data-testid="stWidgetLabel"] p{color:#1a1a18 !important;font-size:13px !important}
+.stCheckbox span p{color:#1a1a18 !important}
+.stSlider [data-testid="stTickBarMin"],[data-testid="stTickBarMax"]{color:#1a1a18 !important}
 .stTabs [data-baseweb="tab"]{color:#444441 !important}
 .stTabs [aria-selected="true"]{color:#1a1a18 !important;font-weight:500 !important}
+[data-testid="stSelectbox"]>div>div{background:#ffffff !important;color:#1a1a18 !important;border:1px solid #e8e6e0 !important}
+[data-testid="stSelectbox"] svg{fill:#1a1a18 !important}
+[data-testid="stMetricLabel"] p{color:#888780 !important;font-size:13px !important}
+[data-testid="stMetricValue"]{color:#1a1a18 !important}
+[data-testid="stMarkdownContainer"] p{color:#1a1a18 !important}
+.stAlert p{color:#1a1a18 !important}
+[data-testid="stDataFrame"] *{color:#1a1a18 !important}
 .metric-card{background:#fff;border:1px solid #e8e6e0;border-radius:10px;padding:16px 20px;margin-bottom:8px}
-.metric-label{font-size:11px;color:#888780;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
-.metric-value{font-size:26px;font-weight:500;color:#1a1a18;line-height:1.1}
-.metric-sub{font-size:12px;color:#b4b2a9;margin-top:4px}
-.metric-value.pos{color:#0F6E56}
-.metric-value.neg{color:#A32D2D}
-.metric-value.warn{color:#854F0B}
-.section-title{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#888780;margin:1.5rem 0 .5rem}
+.metric-label{font-size:11px;color:#888780 !important;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+.metric-value{font-size:26px;font-weight:500;color:#1a1a18 !important;line-height:1.1}
+.metric-sub{font-size:12px;color:#888780 !important;margin-top:4px}
+.metric-value.pos{color:#0F6E56 !important}
+.metric-value.neg{color:#A32D2D !important}
+.metric-value.warn{color:#854F0B !important}
+.section-title{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#888780 !important;margin:1.5rem 0 .5rem}
 .badge{display:inline-block;font-size:11px;padding:2px 10px;border-radius:12px;font-weight:500}
-.badge-green{background:#EAF3DE;color:#27500A}
-.badge-blue{background:#E6F1FB;color:#185FA5}
-.badge-amber{background:#FAEEDA;color:#633806}
-.badge-red{background:#FCEBEB;color:#A32D2D}
+.badge-green{background:#EAF3DE;color:#27500A !important}
+.badge-blue{background:#E6F1FB;color:#185FA5 !important}
+.badge-amber{background:#FAEEDA;color:#633806 !important}
+.badge-red{background:#FCEBEB;color:#A32D2D !important}
 div[data-testid="stHorizontalBlock"]{gap:12px}
 </style>
 """, unsafe_allow_html=True)
+
 
 # ── Constantes ───────────────────────────────────────────────────────────────
 ASSET_CFG = [
