@@ -371,24 +371,79 @@ k6.markdown(kpi("Calmar ratio", f"{m_port['calmar']:.3f}", f"IBOV {m_ibov['calma
 
 st.divider()
 
-# ── Tabs principais ───────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+
+# ── Eventos de cauda ─────────────────────────────────────────────────────────
+TAIL_EVENTS = [
+    {"name": "Manifestações de Junho",  "start": "2013-05-31", "end": "2013-07-31", "color": "#E24B4A",
+     "desc": "Protestos generalizados, queda de confiança, pressão sobre ativos de risco.", "tipo": "Doméstico"},
+    {"name": "Greve dos Caminhoneiros", "start": "2018-05-31", "end": "2018-06-30", "color": "#BA7517",
+     "desc": "Paralisação nacional, pressão inflacionária e incerteza política pré-eleitoral.", "tipo": "Doméstico"},
+    {"name": "Eleições 2018",           "start": "2018-09-30", "end": "2018-10-31", "color": "#378ADD",
+     "desc": "Alta volatilidade eleitoral, rali de ativos de risco após resultado.", "tipo": "Doméstico"},
+    {"name": "COVID-19",                "start": "2020-02-29", "end": "2020-04-30", "color": "#7F77DD",
+     "desc": "Crash global sincronizado, fuga para liquidez, colapso de ativos de risco.", "tipo": "Global"},
+    {"name": "Invasão da Ucrânia",      "start": "2022-01-31", "end": "2022-03-31", "color": "#888780",
+     "desc": "Choque de commodities, inflação global, ciclo de alta de juros nos EUA.", "tipo": "Global"},
+    {"name": "Crise SVB",               "start": "2023-02-28", "end": "2023-03-31", "color": "#1D9E75",
+     "desc": "Colapso de bancos regionais americanos, fuga para treasuries.", "tipo": "Global"},
+    {"name": "Americanas + 8/Jan",      "start": "2022-12-31", "end": "2023-01-31", "color": "#E24B4A",
+     "desc": "Fraude contábil de R$20bi + crise política. Choque de crédito local.", "tipo": "Doméstico"},
+    {"name": "Ataque Irã → Israel",     "start": "2024-03-31", "end": "2024-04-30", "color": "#854F0B",
+     "desc": "Escalada geopolítica, pressão sobre petróleo e ativos de risco globais.", "tipo": "Global"},
+    {"name": "Crise fiscal BR",         "start": "2024-10-31", "end": "2024-12-31", "color": "#E24B4A",
+     "desc": "Pacote de gastos sem cobertura, colapso do real, abertura brutal da curva.", "tipo": "Doméstico"},
+    {"name": "Tarifas Trump",           "start": "2025-03-31", "end": "2025-04-30", "color": "#7F77DD",
+     "desc": "Guerra comercial global, crash do SPY, fuga de risco generalizada.", "tipo": "Global"},
+]
+
+# ── Tabs principais ─────────────────────────────────────────────────────────
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📈 Retorno acumulado",
     "📉 Drawdown",
     "📊 Métricas",
     "🔄 Rebalanceamento",
     "🌐 Cenários",
+    "⚡ Eventos de cauda",
 ])
 
 # ── Tab 1: Retorno acumulado ──────────────────────────────────────────────────
 with tab1:
-    show_ibov = st.checkbox("Mostrar Ibovespa", value=True)
-    show_cdi  = st.checkbox("Mostrar CDI",      value=True)
-    show_igual= st.checkbox("Mostrar 1/N igual",value=False)
+    # ── Pesos customizados vindos da aba Rebalanceamento (session_state) ──
+    def get_custom_weights():
+        w = {}
+        for cfg in ASSET_CFG:
+            key = f"rebal_{cfg['name']}"
+            w[cfg["name"]] = st.session_state.get(key, cfg["w"] * 100) / 100
+        return w
 
+    custom_w = get_custom_weights()
+    total_custom = sum(custom_w.values())
+    custom_valid = abs(total_custom - 1.0) < 0.02
+
+    # Calcular portfólio customizado
+    custom_ret = sum(custom_w[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+                     for a in ASSET_CFG)
+    custom_cum = (1 + custom_ret).cumprod() * 100
+
+    # Calcular 1/N
+    eq_ret = sum((1/6) * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+                 for a in ASSET_CFG)
+    eq_cum = (1 + eq_ret).cumprod() * 100
+
+    # ── Checkboxes ──
+    col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+    show_cdi    = col_c1.checkbox("CDI",                value=True)
+    show_ibov   = col_c2.checkbox("Ibovespa",           value=True)
+    show_igual  = col_c3.checkbox("1/N igual",          value=False)
+    show_custom = col_c4.checkbox("Portfólio customizado", value=True)
+
+    if show_custom and not custom_valid:
+        st.warning("⚠️ Os pesos na aba Rebalanceamento não somam 100%. Ajuste antes de comparar.")
+
+    # ── Gráfico retorno acumulado ──
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=port_cum.index, y=port_cum.values.round(2),
-        name="HRP+BL", line=dict(color="#378ADD", width=2.5)))
+        name="HRP+BL original", line=dict(color="#378ADD", width=2.5)))
     if show_cdi:
         fig.add_trace(go.Scatter(x=cdi_cum.index, y=cdi_cum.values.round(2),
             name="CDI", line=dict(color="#1D9E75", width=1.5, dash="dot")))
@@ -396,45 +451,96 @@ with tab1:
         fig.add_trace(go.Scatter(x=ibov_cum.index, y=ibov_cum.values.round(2),
             name="Ibovespa", line=dict(color="#BA7517", width=1.5, dash="dash")))
     if show_igual:
-        eq_ret = sum((1/6) * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
-                     for a in ASSET_CFG)
-        eq_cum = (1 + eq_ret).cumprod() * 100
         fig.add_trace(go.Scatter(x=eq_cum.index, y=eq_cum.values.round(2),
-            name="1/N igual", line=dict(color="#7F77DD", width=1.2, dash="longdash")))
+            name="1/N igual", line=dict(color="#7F77DD", width=1.5, dash="longdash")))
+    if show_custom and custom_valid:
+        fig.add_trace(go.Scatter(x=custom_cum.index, y=custom_cum.values.round(2),
+            name="Portfólio customizado", line=dict(color="#E24B4A", width=2, dash="dashdot")))
+
+    # ── Marcações de eventos de cauda ──
+    show_events = st.checkbox("Marcar eventos de cauda no gráfico", value=True, key="ev_acum")
+    if show_events:
+        for ev in TAIL_EVENTS:
+            try:
+                ev_start = pd.Timestamp(ev["start"])
+                ev_end   = pd.Timestamp(ev["end"])
+                if ev_start < port_cum.index[-1] and ev_start >= port_cum.index[0]:
+                    fig.add_vrect(
+                        x0=ev_start, x1=ev_end,
+                        fillcolor=ev["color"], opacity=0.12,
+                        layer="below", line_width=0,
+                    )
+                    fig.add_annotation(
+                        x=ev_start, y=1.0, yref="paper",
+                        text=ev["name"], textangle=-90,
+                        showarrow=False,
+                        font=dict(size=9, color=ev["color"]),
+                        xanchor="right", yanchor="top",
+                        bgcolor="rgba(248,247,244,0.7)",
+                    )
+            except Exception:
+                pass
 
     fig.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
-        height=340, hovermode="x unified",
+        height=420, hovermode="x unified",
         font=dict(color="#1a1a18"),
-        margin=dict(l=0,r=0,t=8,b=0),
+        margin=dict(l=0,r=40,t=8,b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color="#1a1a18")),
         yaxis=dict(tickprefix="R$", gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # Retorno anual
+    # ── Nota sobre portfólio customizado ──
+    if show_custom and custom_valid:
+        acum_custom = (custom_cum.iloc[-1] / 100 - 1) * 100
+        acum_hrpbl  = (port_cum.iloc[-1]   / 100 - 1) * 100
+        diff = acum_custom - acum_hrpbl
+        if diff >= 0:
+            st.success(f"📊 Com os pesos customizados, o retorno acumulado seria **+{acum_custom:.1f}%** — {diff:+.1f}% vs HRP+BL original ({acum_hrpbl:.1f}%)")
+        else:
+            st.info(f"📊 Com os pesos customizados, o retorno acumulado seria **+{acum_custom:.1f}%** — {diff:+.1f}% vs HRP+BL original ({acum_hrpbl:.1f}%)")
+
+    # ── Gráfico retorno anual ──
     st.markdown("<div class='section-title'>Retorno anual</div>", unsafe_allow_html=True)
-    ann_port = port_cum.resample("YE").last().pct_change().dropna() * 100
-    ann_cdi  = cdi_cum.resample("YE").last().pct_change().dropna() * 100
-    ann_ibov = ibov_cum.resample("YE").last().pct_change().dropna() * 100
+    ann_port   = port_cum.resample("YE").last().pct_change().dropna() * 100
+    ann_cdi    = cdi_cum.resample("YE").last().pct_change().dropna() * 100
+    ann_ibov   = ibov_cum.resample("YE").last().pct_change().dropna() * 100
+    ann_igual  = eq_cum.resample("YE").last().pct_change().dropna() * 100
+    ann_custom = custom_cum.resample("YE").last().pct_change().dropna() * 100
     years = sorted(set(ann_port.index.year) & set(ann_cdi.index.year) & set(ann_ibov.index.year))
+
+    def get_ann(series_ann, yr):
+        vals = series_ann[series_ann.index.year == yr]
+        return round(vals.values[0], 1) if len(vals) else None
 
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(x=[str(y) for y in years],
-        y=[ann_port[ann_port.index.year==y].values[0] for y in years if len(ann_port[ann_port.index.year==y])],
-        name="HRP+BL", marker_color="#378ADD"))
-    fig2.add_trace(go.Bar(x=[str(y) for y in years],
-        y=[ann_cdi[ann_cdi.index.year==y].values[0] for y in years if len(ann_cdi[ann_cdi.index.year==y])],
-        name="CDI", marker_color="rgba(29,158,117,0.4)"))
-    fig2.add_trace(go.Bar(x=[str(y) for y in years],
-        y=[ann_ibov[ann_ibov.index.year==y].values[0] for y in years if len(ann_ibov[ann_ibov.index.year==y])],
-        name="Ibovespa", marker_color="rgba(186,117,23,0.3)"))
+        y=[get_ann(ann_port, y) for y in years],
+        name="HRP+BL original", marker_color="#378ADD"))
+    if show_cdi:
+        fig2.add_trace(go.Bar(x=[str(y) for y in years],
+            y=[get_ann(ann_cdi, y) for y in years],
+            name="CDI", marker_color="rgba(29,158,117,0.5)"))
+    if show_ibov:
+        fig2.add_trace(go.Bar(x=[str(y) for y in years],
+            y=[get_ann(ann_ibov, y) for y in years],
+            name="Ibovespa", marker_color="rgba(186,117,23,0.4)"))
+    if show_igual:
+        fig2.add_trace(go.Bar(x=[str(y) for y in years],
+            y=[get_ann(ann_igual, y) for y in years],
+            name="1/N igual", marker_color="rgba(127,119,221,0.5)"))
+    if show_custom and custom_valid:
+        fig2.add_trace(go.Bar(x=[str(y) for y in years],
+            y=[get_ann(ann_custom, y) for y in years],
+            name="Portfólio customizado", marker_color="rgba(226,75,74,0.7)"))
+
     fig2.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
         font=dict(color="#1a1a18"),
         margin=dict(l=0,r=0,t=8,b=0),
-        height=280, barmode="group",
+        height=300, barmode="group",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color="#1a1a18")),
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
         yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
@@ -644,7 +750,169 @@ with tab5:
     else:
         st.warning(f"⚠️ Neste cenário o CDI supera o portfólio em **{abs(premium_sc):.2f}%** a.a. Considere revisar as visões no Black-Litterman.")
 
-# ── Footer ────────────────────────────────────────────────────────────────────
+
+# ── Tab 6: Eventos de cauda ───────────────────────────────────────────────────
+with tab6:
+    st.markdown("Análise de performance do portfólio nos principais eventos de estresse históricos. "
+                "Os retornos são calculados com os dados reais carregados.")
+
+    # Filtros
+    col_f1, col_f2 = st.columns(2)
+    tipo_filtro = col_f1.multiselect("Tipo de evento", ["Doméstico", "Global"],
+                                      default=["Doméstico", "Global"])
+    show_custom_ev = col_f2.checkbox("Incluir portfólio customizado", value=True)
+
+    eventos_filtrados = [ev for ev in TAIL_EVENTS if ev["tipo"] in tipo_filtro]
+
+    # ── Tabela de performance por evento ──
+    st.markdown("<div class='section-title'>performance em cada evento</div>", unsafe_allow_html=True)
+
+    custom_w_ev = {}
+    for cfg in ASSET_CFG:
+        key = f"rebal_{cfg['name']}"
+        custom_w_ev[cfg["name"]] = st.session_state.get(key, cfg["w"] * 100) / 100
+
+    custom_ret_ev = sum(
+        custom_w_ev[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+        for a in ASSET_CFG
+    )
+    custom_cum_ev = (1 + custom_ret_ev).cumprod() * 100
+
+    def period_ret(cum_series, start, end):
+        try:
+            s = pd.Timestamp(start)
+            e = pd.Timestamp(end)
+            v0 = cum_series[cum_series.index <= s]
+            v1 = cum_series[cum_series.index <= e]
+            if len(v0) == 0 or len(v1) == 0:
+                return None
+            return round((v1.iloc[-1] / v0.iloc[-1] - 1) * 100, 2)
+        except Exception:
+            return None
+
+    rows_ev = []
+    for ev in eventos_filtrados:
+        r_hrp  = period_ret(port_cum,    ev["start"], ev["end"])
+        r_cdi  = period_ret(cdi_cum,     ev["start"], ev["end"])
+        r_ibov = period_ret(ibov_cum,    ev["start"], ev["end"])
+        r_cust = period_ret(custom_cum_ev, ev["start"], ev["end"])
+        eq_cum_ev = (1 + sum((1/6)*series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+                              for a in ASSET_CFG)).cumprod() * 100
+        r_igual = period_ret(eq_cum_ev, ev["start"], ev["end"])
+
+        row = {
+            "Evento":   ev["name"],
+            "Tipo":     ev["tipo"],
+            "Período":  f"{ev['start'][2:7]} → {ev['end'][2:7]}",
+            "HRP+BL":   f"{r_hrp:+.1f}%" if r_hrp is not None else "—",
+            "CDI":      f"{r_cdi:+.1f}%"  if r_cdi  is not None else "—",
+            "Ibovespa": f"{r_ibov:+.1f}%" if r_ibov is not None else "—",
+            "1/N":      f"{r_igual:+.1f}%" if r_igual is not None else "—",
+        }
+        if show_custom_ev:
+            row["Customizado"] = f"{r_cust:+.1f}%" if r_cust is not None else "—"
+        rows_ev.append(row)
+
+    df_ev = pd.DataFrame(rows_ev)
+    st.dataframe(df_ev, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── Gráfico de barras comparativo ──
+    st.markdown("<div class='section-title'>comparativo visual por evento</div>", unsafe_allow_html=True)
+
+    ev_names  = [r["Evento"]   for r in rows_ev]
+    ev_hrp    = [float(r["HRP+BL"].replace("%","").replace("+","")) if r["HRP+BL"] != "—" else 0 for r in rows_ev]
+    ev_ibov   = [float(r["Ibovespa"].replace("%","").replace("+","")) if r["Ibovespa"] != "—" else 0 for r in rows_ev]
+    ev_cdi    = [float(r["CDI"].replace("%","").replace("+","")) if r["CDI"] != "—" else 0 for r in rows_ev]
+    ev_igual  = [float(r["1/N"].replace("%","").replace("+","")) if r["1/N"] != "—" else 0 for r in rows_ev]
+
+    fig_ev = go.Figure()
+    fig_ev.add_trace(go.Bar(x=ev_names, y=ev_hrp,  name="HRP+BL",   marker_color="#378ADD"))
+    fig_ev.add_trace(go.Bar(x=ev_names, y=ev_cdi,  name="CDI",      marker_color="rgba(29,158,117,0.6)"))
+    fig_ev.add_trace(go.Bar(x=ev_names, y=ev_ibov, name="Ibovespa", marker_color="rgba(186,117,23,0.5)"))
+    fig_ev.add_trace(go.Bar(x=ev_names, y=ev_igual,name="1/N igual", marker_color="rgba(127,119,221,0.6)"))
+    if show_custom_ev:
+        ev_cust = [float(r["Customizado"].replace("%","").replace("+",""))
+                   if r.get("Customizado","—") != "—" else 0 for r in rows_ev]
+        fig_ev.add_trace(go.Bar(x=ev_names, y=ev_cust, name="Customizado", marker_color="rgba(226,75,74,0.7)"))
+
+    fig_ev.add_hline(y=0, line_color="#888780", line_width=1)
+    fig_ev.update_layout(
+        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+        height=360, barmode="group",
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0,r=0,t=8,b=120),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color="#1a1a18")),
+        xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=10),
+                   color="#1a1a18", tickangle=-35),
+        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441", size=11), color="#1a1a18",
+                   zeroline=True, zerolinecolor="#888780"),
+    )
+    st.plotly_chart(fig_ev, use_container_width=True)
+
+    st.divider()
+
+    # ── Gráfico acumulado com eventos marcados ──
+    st.markdown("<div class='section-title'>retorno acumulado com eventos destacados</div>", unsafe_allow_html=True)
+
+    fig_ev2 = go.Figure()
+    fig_ev2.add_trace(go.Scatter(x=port_cum.index, y=port_cum.values.round(2),
+        name="HRP+BL", line=dict(color="#378ADD", width=2.5)))
+    fig_ev2.add_trace(go.Scatter(x=cdi_cum.index, y=cdi_cum.values.round(2),
+        name="CDI", line=dict(color="#1D9E75", width=1.5, dash="dot")))
+    fig_ev2.add_trace(go.Scatter(x=ibov_cum.index, y=ibov_cum.values.round(2),
+        name="Ibovespa", line=dict(color="#BA7517", width=1.5, dash="dash")))
+
+    for ev in eventos_filtrados:
+        try:
+            ev_start = pd.Timestamp(ev["start"])
+            ev_end   = pd.Timestamp(ev["end"])
+            if ev_start >= port_cum.index[0] and ev_start <= port_cum.index[-1]:
+                fig_ev2.add_vrect(
+                    x0=ev_start, x1=ev_end,
+                    fillcolor=ev["color"], opacity=0.15,
+                    layer="below", line_width=0,
+                )
+                fig_ev2.add_annotation(
+                    x=ev_start, y=1.0, yref="paper",
+                    text=ev["name"], textangle=-90,
+                    showarrow=False,
+                    font=dict(size=9, color=ev["color"]),
+                    xanchor="right", yanchor="top",
+                    bgcolor="rgba(248,247,244,0.8)",
+                )
+        except Exception:
+            pass
+
+    fig_ev2.update_layout(
+        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+        height=420, hovermode="x unified",
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0,r=40,t=8,b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color="#1a1a18")),
+        yaxis=dict(tickprefix="R$", gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+        xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+    )
+    st.plotly_chart(fig_ev2, use_container_width=True)
+
+    # ── Legenda dos eventos ──
+    st.markdown("<div class='section-title'>legenda dos eventos</div>", unsafe_allow_html=True)
+    cols_leg = st.columns(2)
+    for i, ev in enumerate(eventos_filtrados):
+        col = cols_leg[i % 2]
+        tipo_badge = "🇧🇷" if ev["tipo"] == "Doméstico" else "🌍"
+        col.markdown(
+            f"<div style='display:flex;align-items:flex-start;gap:8px;margin-bottom:8px'>"
+            f"<span style='width:10px;height:10px;border-radius:50%;background:{ev['color']};flex-shrink:0;margin-top:4px'></span>"
+            f"<div><strong style='font-size:13px'>{tipo_badge} {ev['name']}</strong>"
+            f"<br><span style='font-size:12px;color:#888780'>{ev['desc']}</span></div></div>",
+            unsafe_allow_html=True
+        )
+
+
+# ── Footer ──────────────────────────────────────────────────────────────────────
 st.divider()
 st.markdown(f"""
 <div style='text-align:center;font-size:12px;color:#b4b2a9;padding:.5rem 0'>
