@@ -465,15 +465,16 @@ def kpi(label, value, sub="", cls=""):
 # ── Linha 1: HRP+BL original ──
 st.markdown("<div style='font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;"
             "color:#378ADD;margin-bottom:6px'>HRP + Black-Litterman</div>", unsafe_allow_html=True)
-k1,k2,k3,k4,k5,k6 = st.columns(6)
+k1,k2,k3,k4,k5,k6,k7 = st.columns(7)
 k1.markdown(kpi("Acumulado", f"+{acum_port:.1f}%", f"CDI +{acum_cdi:.1f}%", "pos"), unsafe_allow_html=True)
 k2.markdown(kpi("Retorno a.a.", f"{m_port['ann_ret']*100:.2f}%", f"IBOV {m_port['ann_ret']*100 - m_ibov['ann_ret']*100:+.1f}%"), unsafe_allow_html=True)
+k3.markdown(kpi("Volatilidade a.a.", f"{m_port['ann_vol']*100:.2f}%", f"IBOV {m_ibov['ann_vol']*100:.1f}%", "good"), unsafe_allow_html=True)
 cls_sharpe = "pos" if m_port["sharpe"] > 0.2 else "warn" if m_port["sharpe"] > 0 else "neg"
-k3.markdown(kpi("Sharpe (rf=CDI)", f"{m_port['sharpe']:.3f}", f"IBOV {m_ibov['sharpe']:.3f}", cls_sharpe), unsafe_allow_html=True)
+k4.markdown(kpi("Sharpe (rf=CDI)", f"{m_port['sharpe']:.3f}", f"IBOV {m_ibov['sharpe']:.3f}", cls_sharpe), unsafe_allow_html=True)
 cls_sort = "pos" if m_port["sortino"] and m_port["sortino"] > 0.3 else "warn"
-k4.markdown(kpi("Sortino", f"{m_port['sortino']:.3f}" if m_port["sortino"] else "—", "penaliza só quedas", cls_sort), unsafe_allow_html=True)
-k5.markdown(kpi("Max Drawdown", f"{m_port['max_dd']*100:.2f}%", f"IBOV {m_ibov['max_dd']*100:.1f}%", "warn"), unsafe_allow_html=True)
-k6.markdown(kpi("Calmar ratio", f"{m_port['calmar']:.3f}", f"IBOV {m_ibov['calmar']:.3f}", "pos"), unsafe_allow_html=True)
+k5.markdown(kpi("Sortino", f"{m_port['sortino']:.3f}" if m_port["sortino"] else "—", "penaliza só quedas", cls_sort), unsafe_allow_html=True)
+k6.markdown(kpi("Max Drawdown", f"{m_port['max_dd']*100:.2f}%", f"IBOV {m_ibov['max_dd']*100:.1f}%", "warn"), unsafe_allow_html=True)
+k7.markdown(kpi("Calmar ratio", f"{m_port['calmar']:.3f}", f"IBOV {m_ibov['calmar']:.3f}", "pos"), unsafe_allow_html=True)
 
 # ── Linha 2: Portfólio customizado ──
 custom_w_hdr = {}
@@ -494,7 +495,7 @@ if custom_valid_hdr:
 
     st.markdown("<div style='font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;"
                 "color:#E24B4A;margin:8px 0 6px'>Portfólio customizado</div>", unsafe_allow_html=True)
-    ck1,ck2,ck3,ck4,ck5,ck6 = st.columns(6)
+    ck1,ck2,ck3,ck4,ck5,ck6,ck7 = st.columns(7)
     diff_acum = acum_cust - acum_port
     ck1.markdown(kpi("Acumulado", f"+{acum_cust:.1f}%",
         f"{'↑' if diff_acum>=0 else '↓'} {diff_acum:+.1f}% vs HRP+BL",
@@ -503,19 +504,23 @@ if custom_valid_hdr:
     ck2.markdown(kpi("Retorno a.a.", f"{m_cust['ann_ret']*100:.2f}%",
         f"{diff_ret:+.1f}% vs HRP+BL",
         "pos" if diff_ret >= 0 else "warn"), unsafe_allow_html=True)
+    diff_vol = (m_cust["ann_vol"] - m_port["ann_vol"])*100
+    cls_vol = "pos" if diff_vol <= 0 else "warn"
+    ck3.markdown(kpi("Volatilidade a.a.", f"{m_cust['ann_vol']*100:.2f}%",
+        f"{diff_vol:+.2f}% vs HRP+BL", cls_vol), unsafe_allow_html=True)
     cls_cs = "pos" if m_cust["sharpe"] > 0.2 else "warn" if m_cust["sharpe"] > 0 else "neg"
     diff_sh = m_cust["sharpe"] - m_port["sharpe"]
-    ck3.markdown(kpi("Sharpe (rf=CDI)", f"{m_cust['sharpe']:.3f}",
+    ck4.markdown(kpi("Sharpe (rf=CDI)", f"{m_cust['sharpe']:.3f}",
         f"{diff_sh:+.3f} vs HRP+BL", cls_cs), unsafe_allow_html=True)
     cls_cso = "pos" if m_cust["sortino"] and m_cust["sortino"] > 0.3 else "warn"
-    ck4.markdown(kpi("Sortino", f"{m_cust['sortino']:.3f}" if m_cust["sortino"] else "—",
+    ck5.markdown(kpi("Sortino", f"{m_cust['sortino']:.3f}" if m_cust["sortino"] else "—",
         "penaliza só quedas", cls_cso), unsafe_allow_html=True)
     diff_dd = m_cust["max_dd"]*100 - m_port["max_dd"]*100
-    ck5.markdown(kpi("Max Drawdown", f"{m_cust['max_dd']*100:.2f}%",
+    ck6.markdown(kpi("Max Drawdown", f"{m_cust['max_dd']*100:.2f}%",
         f"{diff_dd:+.1f}% vs HRP+BL",
         "pos" if diff_dd >= 0 else "warn"), unsafe_allow_html=True)
     diff_cal = m_cust["calmar"] - m_port["calmar"]
-    ck6.markdown(kpi("Calmar ratio", f"{m_cust['calmar']:.3f}",
+    ck7.markdown(kpi("Calmar ratio", f"{m_cust['calmar']:.3f}",
         f"{diff_cal:+.3f} vs HRP+BL",
         "pos" if diff_cal >= 0 else "warn"), unsafe_allow_html=True)
 else:
@@ -795,23 +800,39 @@ with tab3:
 
 # ── Tab 4: Rebalanceamento ────────────────────────────────────────────────────
 with tab4:
-    st.markdown("Ajuste os pesos atuais do portfólio e veja o drift em relação ao target HRP+BL.")
+    st.markdown("Insira os pesos atuais da carteira e veja o drift em relação ao target HRP+BL.")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#888780;margin-bottom:.75rem'>"
+        "💡 Digite o percentual de cada ativo (ex: 26.8). Os pesos devem somar 100%."
+        "</div>", unsafe_allow_html=True
+    )
 
     atual = {}
     col_s1, col_s2 = st.columns(2)
     for i, cfg in enumerate(ASSET_CFG):
         col = col_s1 if i < 3 else col_s2
         with col:
-            atual[cfg["name"]] = st.slider(
-                cfg["name"],
-                min_value=0.0, max_value=60.0,
-                value=round(cfg["w"]*100, 1), step=0.5,
-                key=f"rebal_{cfg['name']}"
+            atual[cfg["name"]] = col.number_input(
+                f"{cfg['name']} (%)",
+                min_value=0.0, max_value=100.0,
+                value=round(cfg["w"]*100, 1), step=0.1,
+                format="%.1f",
+                key=f"rebal_{cfg['name']}",
+                help=f"Target HRP+BL: {cfg['w']*100:.1f}%"
             )
 
     total_atual = sum(atual.values())
-    delta_cor = "normal" if abs(total_atual - 100) < 0.5 else "inverse"
-    st.metric("Total alocado", f"{total_atual:.1f}%", delta=f"{total_atual-100:.1f}% vs 100%")
+    # Barra visual de progresso do total
+    prog_color = "#1D9E75" if abs(total_atual-100) < 0.5 else "#E24B4A"
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:12px;margin:8px 0'>"
+        f"<span style='font-size:13px;color:#888780'>Total alocado:</span>"
+        f"<strong style='font-size:18px;color:{prog_color}'>{total_atual:.1f}%</strong>"
+        f"<span style='font-size:12px;color:{prog_color}'>"
+        f"{'✅ ok' if abs(total_atual-100)<0.5 else f'⚠️ {total_atual-100:+.1f}% vs 100%'}"
+        f"</span></div>", unsafe_allow_html=True
+    )
     if abs(total_atual - 100) > 0.5:
         st.warning("⚠️ Total diferente de 100%. Ajuste os pesos antes de analisar.")
 
@@ -895,20 +916,195 @@ with tab5:
     }
     p = presets[preset]
 
+    # ── Inputs numéricos ──
     c1, c2, c3, c4 = st.columns(4)
-    selic = c1.slider("Selic (% a.a.)", 5.0, 20.0, p["selic"], 0.25)
-    ipca  = c2.slider("IPCA (% a.a.)",  2.0, 15.0, p["ipca"],  0.25)
-    pib   = c3.slider("PIB (% a.a.)",  -5.0,  8.0, p["pib"],   0.25)
-    fx    = c4.slider("USD/BRL",         4.0,  8.0, p["fx"],    0.1)
+    selic = c1.number_input("Selic (% a.a.)", min_value=2.0,  max_value=30.0,
+                             value=float(p["selic"]), step=0.25, format="%.2f")
+    ipca  = c2.number_input("IPCA (% a.a.)",  min_value=-2.0, max_value=30.0,
+                             value=float(p["ipca"]),  step=0.25, format="%.2f")
+    pib   = c3.number_input("PIB (% a.a.)",   min_value=-10.0,max_value=15.0,
+                             value=float(p["pib"]),   step=0.25, format="%.2f")
+    fx    = c4.number_input("USD/BRL",         min_value=2.0,  max_value=15.0,
+                             value=float(p["fx"]),    step=0.10, format="%.2f")
 
-    # ── Retornos esperados por ativo ──
+    # ── Correlações cruzadas implícitas ──────────────────────────────────────
+    # As variáveis macro não são independentes. Aplicamos ajustes automáticos
+    # baseados nas relações históricas observadas na economia brasileira.
+    use_correlacoes = st.checkbox(
+        "Aplicar correlações cruzadas automáticas (câmbio ↔ inflação ↔ juros ↔ PIB)",
+        value=True,
+        help="Quando ativo, ajusta automaticamente as variáveis inter-relacionadas."
+    )
+
+    selic_adj, ipca_adj, pib_adj, fx_adj = selic, ipca, pib, fx
+
+    if use_correlacoes:
+        ajustes = []
+
+        # 1. Recessão puxa câmbio para cima e força corte de juros
+        if pib < 0:
+            delta_fx_recessao   = abs(pib) * 0.25
+            delta_selic_recessao = abs(pib) * 0.40
+            fx_adj    = min(12.0, fx + delta_fx_recessao)
+            selic_adj = max(4.0,  selic - delta_selic_recessao)
+            ajustes.append(
+                f"📉 Recessão (PIB {pib:.1f}%): "
+                f"câmbio ajustado +{delta_fx_recessao:.2f} → {fx_adj:.2f} | "
+                f"Selic ajustada -{delta_selic_recessao:.2f}% → {selic_adj:.2f}%"
+            )
+
+        # 2. Câmbio alto puxa inflação (pass-through histórico BR ≈ 0.10-0.15)
+        delta_fx_base  = fx_adj - 5.1
+        if abs(delta_fx_base) > 0.3:
+            passthrough    = 0.12
+            ipca_adj = min(20.0, ipca + delta_fx_base * passthrough * 10)
+            ajustes.append(
+                f"💱 Pass-through cambial ({fx_adj:.2f} vs base 5.10): "
+                f"IPCA ajustado +{delta_fx_base*passthrough*10:.2f}% → {ipca_adj:.2f}%"
+            )
+
+        # 3. IPCA alto acima da meta força alta da Selic (regra de Taylor simplificada)
+        meta_inflacao = 3.0
+        if ipca_adj > meta_inflacao + 1.5:
+            reacao_copom = (ipca_adj - meta_inflacao - 1.5) * 0.8
+            selic_adj    = min(25.0, selic_adj + reacao_copom)
+            ajustes.append(
+                f"🏦 Reação Copom (IPCA {ipca_adj:.1f}% > meta+1.5%): "
+                f"Selic ajustada +{reacao_copom:.2f}% → {selic_adj:.2f}%"
+            )
+
+        # 4. Juro muito alto deprime PIB (lag de 2-4 trimestres, simplificado)
+        if selic_adj > 14.0:
+            depressao_pib = (selic_adj - 14.0) * 0.15
+            pib_adj = max(-6.0, pib_adj - depressao_pib)
+            ajustes.append(
+                f"📊 Juro alto ({selic_adj:.1f}%): PIB ajustado "
+                f"-{depressao_pib:.2f}% → {pib_adj:.2f}%"
+            )
+
+        # 5. Rali de risco — câmbio cai, PIB sobe
+        if pib > 3.0 and selic < 11.0:
+            fx_adj    = max(4.0, fx_adj - (pib - 3.0) * 0.15)
+            ajustes.append(
+                f"🚀 Rali de risco (PIB {pib:.1f}%, Selic {selic:.1f}%): "
+                f"câmbio ajustado → {fx_adj:.2f}"
+            )
+
+        if ajustes:
+            with st.expander("Ver ajustes de correlação aplicados", expanded=False):
+                for aj in ajustes:
+                    st.markdown(f"<div style='font-size:12px;color:#444441;padding:4px 0'>{aj}</div>",
+                                unsafe_allow_html=True)
+            # Mostrar valores ajustados
+            ca1,ca2,ca3,ca4 = st.columns(4)
+            def delta_badge(orig, adj, unit=""):
+                d = adj - orig
+                if abs(d) < 0.01: return ""
+                col = "#0F6E56" if d < 0 else "#854F0B"
+                return (f"<span style='font-size:10px;color:{col};margin-left:4px'>"
+                        f"ajustado: {adj:.2f}{unit}</span>")
+            ca1.markdown(f"Selic efetiva: <strong>{selic_adj:.2f}%</strong>"
+                         f"{delta_badge(selic, selic_adj, '%')}", unsafe_allow_html=True)
+            ca2.markdown(f"IPCA efetivo: <strong>{ipca_adj:.2f}%</strong>"
+                         f"{delta_badge(ipca, ipca_adj, '%')}", unsafe_allow_html=True)
+            ca3.markdown(f"PIB efetivo: <strong>{pib_adj:.2f}%</strong>"
+                         f"{delta_badge(pib, pib_adj, '%')}", unsafe_allow_html=True)
+            ca4.markdown(f"USD/BRL efetivo: <strong>{fx_adj:.2f}</strong>"
+                         f"{delta_badge(fx, fx_adj)}", unsafe_allow_html=True)
+
+    # Usar variáveis ajustadas nas fórmulas
+    selic, ipca, pib, fx = selic_adj, ipca_adj, pib_adj, fx_adj
+
+    # ── Retornos esperados por ativo ──────────────────────────────────────────
+    # Todas as fórmulas são estimativas baseadas em relações históricas.
+    # Servem para comparar cenários entre si, não como previsões absolutas.
+
+    # CDI implícito no cenário (Selic menos haircut de liquidez diária ~0.1%)
+    cdi_sc = selic - 0.1
+
+    # ── IDA Pré (pré-fixado duration) ──
+    # O pré carrega a taxa de juro no momento da compra. Em cenário de alta de juros,
+    # o preço do título cai (efeito mark-to-market da duration).
+    # Duration média do IDA Pré ≈ 3-4 anos → DV01 relevante.
+    duration_pre = 3.5
+    delta_selic  = selic - 13.75   # variação vs cenário base
+    mtm_pre      = -duration_pre * delta_selic * 0.6   # impacto MTM simplificado
+    ret_pre      = max(-15, min(25, selic * 0.82 + mtm_pre))
+
+    # ── IMA-Geral (inflação — NTN-B) ──
+    # NTN-B paga IPCA + taxa real. Com Selic alta, a taxa real sobe e o preço cai (duration).
+    # Duration média IMA ≈ 6-7 anos → mais sensível que o pré.
+    duration_ima = 6.5
+    taxa_real    = selic - ipca              # juro real implícito
+    mtm_ima      = -duration_ima * delta_selic * 0.5
+    ret_ima      = max(-20, min(30, ipca + max(3.5, taxa_real * 0.4) + mtm_ima))
+
+    # ── IDA-Geral (debêntures — crédito privado) ──
+    # NÃO é CDI puro. É uma carteira de debêntures com spread de crédito.
+    # Componentes: CDI base + spread de crédito + risco de duration (debs IPCA+)
+    # O spread se comporta de forma anticíclica: abre em recessão/stress, fecha no rali.
+    spread_base = 1.8   # spread histórico médio das debêntures IG brasileiras
+    # Spread se abre com recessão e stress financeiro
+    spread_ciclo = max(-1.0, min(2.5,
+        (-pib * 0.25)                           # recessão abre spread
+        + (max(0, selic - 14) * 0.15)           # juro muito alto = stress financeiro
+        + (max(0, fx - 6.0) * 0.3)              # câmbio descontrolado = fuga de crédito
+    ))
+    spread_total = spread_base + spread_ciclo
+    # Duration parcial das debs IPCA+ (≈30% do índice)
+    mtm_ida_geral = -2.5 * delta_selic * 0.3
+    ret_ida_geral = max(-8, min(22, cdi_sc + spread_total + mtm_ida_geral))
+
+    # ── IHFA (multimercados) ──
+    # Multimercados são estratégias ativas — têm beta ao CDI + alpha direcional.
+    # A dispersão entre gestores é enorme: P10 ≈ CDI-1%, P90 ≈ CDI+6%.
+    # Modelamos como distribuição com média, mínimo e máximo esperados.
+    alpha_central = 2.0    # alpha médio histórico (mediana dos fundos)
+    alpha_p10     = -1.0   # 10% piores gestores ficam abaixo do CDI
+    alpha_p90     = 5.5    # 10% melhores gestores entregam CDI+5.5%
+    beta_pib      = max(-1.5, min(1.5, pib * 0.2))
+    # Em recessão, alpha médio cai (correlações inesperadas)
+    penalidade_recessao = min(0, pib * 0.3) if pib < 0 else 0
+    # Em juro muito alto, gestores direcionais ganham mais
+    bonus_juro_alto = max(0, (selic - 13) * 0.2) if selic > 13 else 0
+
+    ret_ihfa      = max(-5, min(30,
+        cdi_sc * 0.65 + alpha_central + beta_pib + penalidade_recessao + bonus_juro_alto))
+    ret_ihfa_min  = max(-10, min(25,
+        cdi_sc * 0.60 + alpha_p10 + beta_pib + penalidade_recessao * 1.5))
+    ret_ihfa_max  = max(0, min(40,
+        cdi_sc * 0.70 + alpha_p90 + beta_pib + bonus_juro_alto * 1.5))
+
+    # ── Ibovespa (ações brasileiras) ──
+    # Equities são sensíveis ao crescimento (earnings), juro (desconto) e câmbio (exportadoras).
+    # Prêmio de risco histórico do Ibov ≈ 5-6% sobre o CDI em ciclos normais.
+    premio_risco  = 5.5
+    sens_pib      = pib * 2.8                          # elasticidade earnings-PIB
+    custo_capital = max(0, (selic - 10) * 1.2)        # juro alto comprime múltiplos
+    efeit_cambio  = (fx - 5.1) * 1.5                  # câmbio: exportadoras ganham
+    ret_ibov      = max(-40, min(50,
+        cdi_sc + premio_risco + sens_pib - custo_capital + efeit_cambio
+    ))
+
+    # ── Internacional (SPY + TLT em BRL) ──
+    # SPY: correlação com crescimento global e earnings americanos
+    # TLT: correlação inversa com juros EUA (quando Fed sobe, TLT cai)
+    # Câmbio: USD/BRL amplifica (depreciation do real = ganho em BRL)
+    ret_spy_usd  = max(-25, min(35, 9.0 + pib * 1.2 - max(0, (selic-12)*0.3)))
+    ret_tlt_usd  = max(-20, min(20, 4.5 - max(0, (selic-10)*0.8)))
+    ret_intl_usd = 0.40 * ret_spy_usd + 0.60 * ret_tlt_usd
+    # Efeito cambial em BRL
+    delta_fx     = (fx - 5.1) / 5.1 * 100   # variação % do câmbio vs base
+    ret_intl_brl = (1 + ret_intl_usd/100) * (1 + delta_fx/100) - 1
+    ret_intl      = max(-30, min(50, ret_intl_brl * 100))
+
     asset_rets = {
-        "IDA Pré":   max(0, selic * 0.85 - max(0, (selic-12)*0.6)),
-        "IMA":       selic*0.6 + ipca*0.4 + (1.5 if selic > 13 else 0),
-        "IHFA":      selic*0.7 + pib*0.3 + 2.0,
-        "IDA-Geral": selic * 0.95,
-        "Ibovespa":  8 + pib*2.5 - max(0,(selic-12)*0.8) + (-2 if fx > 5.5 else 1),
-        "Internac.": 10 + (3 if fx > 5.5 else -2) + (1 if pib > 2 else -1),
+        "IDA Pré":   round(ret_pre,    2),
+        "IMA":       round(ret_ima,    2),
+        "IHFA":      round(ret_ihfa,   2),
+        "IDA-Geral": round(ret_ida_geral, 2),
+        "Ibovespa":  round(ret_ibov,   2),
+        "Internac.": round(ret_intl,   2),
     }
 
     # ── Pesos customizados ──
@@ -956,13 +1152,39 @@ with tab5:
     rets_vals = [round(v, 2) for v in asset_rets.values()]
     colors    = [COLORS[k] for k in ativos]
 
+    # Range de confiança do IHFA
+    ihfa_idx  = ativos.index("IHFA")
+
     fig_sc = go.Figure()
     fig_sc.add_trace(go.Bar(
         x=ativos, y=rets_vals,
-        name="Retorno esperado (ativo)",
+        name="Retorno esperado (central)",
         marker_color=colors,
         showlegend=True,
     ))
+    # Faixa de confiança P10-P90 para o IHFA
+    fig_sc.add_trace(go.Scatter(
+        x=["IHFA","IHFA"],
+        y=[round(ret_ihfa_min,2), round(ret_ihfa_max,2)],
+        mode="lines+markers",
+        name="IHFA — range P10/P90",
+        line=dict(color="#378ADD", width=3),
+        marker=dict(symbol="line-ew", size=14, color="#378ADD",
+                    line=dict(width=3, color="#378ADD")),
+        showlegend=True,
+    ))
+    fig_sc.add_annotation(
+        x="IHFA", y=ret_ihfa_max + 0.5,
+        text=f"P90: {ret_ihfa_max:.1f}%",
+        showarrow=False, font=dict(size=10, color="#378ADD"),
+        yanchor="bottom",
+    )
+    fig_sc.add_annotation(
+        x="IHFA", y=ret_ihfa_min - 0.5,
+        text=f"P10: {ret_ihfa_min:.1f}%",
+        showarrow=False, font=dict(size=10, color="#E24B4A"),
+        yanchor="top",
+    )
 
     # Linha de peso HRP+BL
     fig_sc.add_trace(go.Scatter(
