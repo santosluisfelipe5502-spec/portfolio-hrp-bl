@@ -54,10 +54,24 @@ st.set_page_config(
 st.markdown("""
 <style>
 [data-testid="stAppViewContainer"]{background:#f8f7f4}
-[data-testid="stSidebar"]{background:#ffffff;border-right:1px solid #e8e6e0}
-[data-testid="stSidebar"] *{color:#1a1a18 !important}
+[data-testid="stSidebar"]{background:#ffffff !important;border-right:1px solid #e8e6e0}
+[data-testid="stSidebar"] *{color:#1a1a18 !important;background-color:transparent !important}
 [data-testid="stSidebar"] small{color:#888780 !important}
 [data-testid="stSidebar"] hr{border-color:#e8e6e0 !important}
+[data-testid="stSidebar"] section{background:#ffffff !important}
+[data-testid="stSidebar"] .stFileUploader{background:#f8f7f4 !important;border-radius:8px}
+[data-testid="stSidebar"] .stFileUploader *{color:#1a1a18 !important}
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]{background:#f8f7f4 !important;border:1.5px dashed #c8c6c0 !important}
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] *{color:#444441 !important}
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button{background:#378ADD !important;color:#ffffff !important;border:none !important}
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button *{color:#ffffff !important}
+[data-testid="stSidebar"] .stMarkdown p{color:#444441 !important}
+[data-testid="stSidebar"] h3{color:#1a1a18 !important}
+[data-testid="stSidebar"] .stToggle label span{color:#1a1a18 !important}
+[data-testid="stSidebar"] .stAlert{background:#EAF3DE !important}
+[data-testid="stSidebar"] .stAlert *{color:#27500A !important}
+[data-testid="stSidebar"] .stInfo{background:#E6F1FB !important}
+[data-testid="stSidebar"] .stInfo *{color:#185FA5 !important}
 body,p,span,div,label{color:#1a1a18}
 label,.stSlider label,.stCheckbox label,.stSelectbox label,
 .stFileUploader label,.stDateInput label,.stNumberInput label,
