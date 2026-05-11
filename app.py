@@ -589,6 +589,15 @@ TAIL_EVENTS = [
      "desc": "Guerra comercial global, crash do SPY, fuga de risco generalizada.", "tipo": "Global"},
 ]
 
+
+def hex_to_rgba(hex_color, alpha=0.5):
+    """Converte cor hex para rgba com transparência."""
+    h = hex_color.lstrip("#")
+    if len(h) == 6:
+        r,g,b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+        return f"rgba({r},{g},{b},{alpha})"
+    return hex_color
+
 # ── Tabs principais ─────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📈 Retorno acumulado",
@@ -1742,7 +1751,7 @@ with tab8:
     fig_cons.add_trace(go.Bar(
         x=nomes_graf, y=[-v for v in abaixo_vals],
         name="Meses abaixo do CDI",
-        marker_color=[cores[n]+"88" for n in nomes_graf],
+        marker_color=[hex_to_rgba(cores[n], 0.45) for n in nomes_graf],
     ))
     # Anotações manuais acima/abaixo das barras
     for i, n in enumerate(nomes_graf):
