@@ -441,15 +441,13 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
 
     rf_ann = m_port["rf_ann"]
 
-    # ── IPCA+6 sintético ──────────────────────────────────────────────────────
-    # Construção: (1 + IPCA_mensal) × (1 + 6%/12) - 1 acumulado
-    # IPCA via API BCB (série 433) ou fallback com média histórica
+    # ── IPCA puro ─────────────────────────────────────────────────────────────
+    # IPCA mensal via API BCB (série 433) ou fallback com média histórica
     ipca_raw = fetch_ipca()
     if ipca_raw is not None:
         ipca_ret = ipca_raw["valor"].reindex(common_idx).ffill().fillna(0.004)
         ipca_src = "BCB"
     else:
-        # Fallback: IPCA médio histórico estimado por período
         idx_yr = common_idx.year
         ipca_vals = np.where(idx_yr < 2016, 0.006,
                     np.where(idx_yr < 2019, 0.003,
@@ -457,10 +455,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
         ipca_ret = pd.Series(ipca_vals, index=common_idx)
         ipca_src = "estimado"
 
-    # IPCA+6: retorno mensal = (1+IPCA) × (1+6%/12) - 1
-    premio_anual = 0.06
-    premio_mensal = (1 + premio_anual) ** (1/12) - 1
-    ipca6_ret = (1 + ipca_ret) * (1 + premio_mensal) - 1
+    ipca6_ret = ipca_ret   # usando IPCA puro (variável mantida para compatibilidade)
     ipca6_cum = (1 + ipca6_ret).cumprod() * 100
     acum_ipca6 = (ipca6_cum.iloc[-1] / 100 - 1) * 100
     ann_ret_ipca6 = (1 + ipca6_ret.mean()) ** 12 - 1
@@ -595,7 +590,7 @@ TAIL_EVENTS = [
 ]
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📈 Retorno acumulado",
     "📉 Drawdown",
     "📊 Métricas",
@@ -603,6 +598,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🌐 Cenários",
     "⚡ Eventos de cauda",
     "📦 Ativos individuais",
+    "🔬 Análise comparativa",
 ])
 
 # ── Tab 1: Retorno acumulado ──────────────────────────────────────────────────
@@ -648,7 +644,7 @@ with tab1:
     show_ibov   = cb_col2.checkbox("Ibovespa",             value=True)
     show_igual  = cb_col3.checkbox("1/N igual",            value=False)
     show_custom = cb_col4.checkbox("Portfólio customizado",value=True)
-    show_ipca6  = st.checkbox("IPCA+6 sintético",          value=True,
+    show_ipca6  = st.checkbox("IPCA",          value=True,
                                help=f"Construção: IPCA mensal (BCB) + 6% a.a. | Fonte IPCA: {ipca_src}")
 
     if show_custom and not custom_valid:
@@ -692,7 +688,7 @@ with tab1:
     if show_ipca6:
         ipca6_f = rebase(ipca6_cum, idx_filtrado)
         fig.add_trace(go.Scatter(x=ipca6_f.index, y=ipca6_f.values.round(2),
-            name="IPCA+6%", line=dict(color="#C4770A", width=1.5, dash="longdashdot")))
+            name="IPCA", line=dict(color="#C4770A", width=1.5, dash="longdashdot")))
 
     # ── Marcações de eventos de cauda ──
     show_events = st.checkbox("Marcar eventos de cauda no gráfico", value=True, key="ev_acum")
@@ -776,7 +772,7 @@ with tab1:
     if show_ipca6:
         fig2.add_trace(go.Bar(x=[str(y) for y in years],
             y=[get_ann(ann_ipca6, y) for y in years],
-            name="IPCA+6%", marker_color="rgba(196,119,10,0.6)"))
+            name="IPCA", marker_color="rgba(196,119,10,0.6)"))
 
     fig2.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
@@ -850,12 +846,12 @@ with tab3:
             f"+{acum_port:.1f}%", f"+{acum_cdi:.1f}%",
             f"+{acum_ibov:.1f}%", f"+{acum_ipca6:.1f}%"),
     }
-    df_metrics = pd.DataFrame(rows, index=["HRP+BL","CDI","Ibovespa","IPCA+6%"]).T
+    df_metrics = pd.DataFrame(rows, index=["HRP+BL","CDI","Ibovespa","IPCA"]).T
     df_metrics.index.name = "Métrica"
     st.dataframe(df_metrics, use_container_width=True)
 
     st.caption(
-        f"IPCA+6% sintético: IPCA mensal via BCB (fonte: {ipca_src}) + 6% a.a. | "
+        f"IPCA puro: IPCA mensal via BCB (fonte: {ipca_src}) + 6% a.a. | "
         "Representa o retorno de uma NTN-B com prêmio real de 6% sobre a inflação."
     )
 
@@ -1397,8 +1393,8 @@ with tab6:
     fig_ev.add_trace(go.Bar(x=ev_names, y=ev_cdi,  name="CDI",      marker_color="rgba(29,158,117,0.6)"))
     fig_ev.add_trace(go.Bar(x=ev_names, y=ev_ibov, name="Ibovespa", marker_color="rgba(186,117,23,0.5)"))
     fig_ev.add_trace(go.Bar(x=ev_names, y=ev_igual,name="1/N igual", marker_color="rgba(127,119,221,0.6)"))
-    ev_ipca6 = [float(r.get("IPCA+6%","0").replace("%","").replace("+","")) if r.get("IPCA+6%","—") != "—" else 0 for r in rows_ev]
-    fig_ev.add_trace(go.Bar(x=ev_names, y=ev_ipca6, name="IPCA+6%", marker_color="rgba(196,119,10,0.6)"))
+    ev_ipca6 = [float(r.get("IPCA","0").replace("%","").replace("+","")) if r.get("IPCA","—") != "—" else 0 for r in rows_ev]
+    fig_ev.add_trace(go.Bar(x=ev_names, y=ev_ipca6, name="IPCA", marker_color="rgba(196,119,10,0.6)"))
     if show_custom_ev:
         ev_cust = [float(r["Customizado"].replace("%","").replace("+",""))
                    if r.get("Customizado","—") != "—" else 0 for r in rows_ev]
@@ -1644,6 +1640,226 @@ with tab7:
         st.dataframe(df_imp, use_container_width=True, hide_index=True)
     else:
         st.info("Selecione ativos e tipos de eventos para ver o impacto.")
+
+
+
+# ── Tab 8: Análise comparativa ────────────────────────────────────────────────
+with tab8:
+    st.markdown("Análise comparativa detalhada entre os portfólios — distribuição mensal "
+                "de retornos, consistência vs CDI e estatísticas descritivas.")
+
+    # ── Recalcular portfólio customizado ──────────────────────────────────────
+    custom_w_t8 = {cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}", cfg["w"]*100)/100
+                   for cfg in ASSET_CFG}
+    total_t8 = sum(custom_w_t8.values())
+    custom_valid_t8 = abs(total_t8 - 1.0) < 0.02
+
+    c_ret_t8 = sum(
+        custom_w_t8[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+        for a in ASSET_CFG
+    ) if custom_valid_t8 else port_ret
+
+    # Séries de retorno mensais de cada portfólio
+    portfolios = {
+        "HRP+BL":    port_ret,
+        "CDI":       cdi_aligned,
+        "Ibovespa":  ibov_ret,
+        "IPCA":      ipca6_ret,
+    }
+    if custom_valid_t8:
+        portfolios["Customizado"] = c_ret_t8
+
+    cores = {
+        "HRP+BL":    "#378ADD",
+        "CDI":       "#1D9E75",
+        "Ibovespa":  "#BA7517",
+        "IPCA":      "#C4770A",
+        "Customizado":"#E24B4A",
+    }
+
+    # ── Bloco 1: Consistência vs CDI ─────────────────────────────────────────
+    st.markdown("<div class='section-title'>consistência mensal vs CDI</div>",
+                unsafe_allow_html=True)
+
+    cols_cons = st.columns(len(portfolios))
+    for i, (nome, ret) in enumerate(portfolios.items()):
+        if nome == "CDI":
+            continue
+        acima = (ret > cdi_aligned).sum()
+        abaixo = (ret <= cdi_aligned).sum()
+        total_m = acima + abaixo
+        pct_acima = acima / total_m * 100
+        with cols_cons[i]:
+            st.markdown(
+                f"<div class='metric-card' style='border-top:3px solid {cores[nome]}'>"
+                f"<div class='metric-label'>{nome}</div>"
+                f"<div class='metric-value pos' style='font-size:26px'>{acima}</div>"
+                f"<div class='metric-sub'>meses acima do CDI ({pct_acima:.0f}%)</div>"
+                f"<div style='margin-top:8px;font-size:13px;color:#A32D2D'>"
+                f"<strong>{abaixo}</strong> meses abaixo ({100-pct_acima:.0f}%)</div>"
+                f"</div>", unsafe_allow_html=True
+            )
+
+    st.divider()
+
+    # ── Bloco 2: Retornos positivos vs negativos ──────────────────────────────
+    st.markdown("<div class='section-title'>meses positivos vs negativos</div>",
+                unsafe_allow_html=True)
+
+    cols_pn = st.columns(len(portfolios))
+    for i, (nome, ret) in enumerate(portfolios.items()):
+        positivos = (ret > 0).sum()
+        negativos = (ret <= 0).sum()
+        total_m = positivos + negativos
+        pct_pos = positivos / total_m * 100
+        with cols_pn[i]:
+            st.markdown(
+                f"<div class='metric-card' style='border-top:3px solid {cores[nome]}'>"
+                f"<div class='metric-label'>{nome}</div>"
+                f"<div class='metric-value pos' style='font-size:26px'>{positivos}</div>"
+                f"<div class='metric-sub'>meses positivos ({pct_pos:.0f}%)</div>"
+                f"<div style='margin-top:8px;font-size:13px;color:#A32D2D'>"
+                f"<strong>{negativos}</strong> meses negativos ({100-pct_pos:.0f}%)</div>"
+                f"</div>", unsafe_allow_html=True
+            )
+
+    st.divider()
+
+    # ── Bloco 3: Gráfico de barras — meses acima/abaixo CDI ──────────────────
+    st.markdown("<div class='section-title'>comparativo visual — consistência vs CDI</div>",
+                unsafe_allow_html=True)
+
+    nomes_graf = [n for n in portfolios if n != "CDI"]
+    acima_vals = [(portfolios[n] > cdi_aligned).sum() for n in nomes_graf]
+    abaixo_vals = [(portfolios[n] <= cdi_aligned).sum() for n in nomes_graf]
+
+    fig_cons = go.Figure()
+    fig_cons.add_trace(go.Bar(
+        x=nomes_graf, y=acima_vals,
+        name="Meses acima do CDI",
+        marker_color=[cores[n] for n in nomes_graf],
+        text=[f"{v} ({v/(v+abaixo_vals[i])*100:.0f}%)" for i,v in enumerate(acima_vals)],
+        textposition="outside", textfont=dict(color="#1a1a18", size=11),
+    ))
+    fig_cons.add_trace(go.Bar(
+        x=nomes_graf, y=[-v for v in abaixo_vals],
+        name="Meses abaixo do CDI",
+        marker_color=[cores[n]+"88" for n in nomes_graf],
+        text=[f"-{v}" for v in abaixo_vals],
+        textposition="outside", textfont=dict(color="#A32D2D", size=11),
+    ))
+    fig_cons.update_layout(
+        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+        height=320, barmode="overlay",
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0,r=0,t=30,b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0, font=dict(color="#1a1a18")),
+        xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441",size=12),
+                   color="#1a1a18"),
+        yaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441",size=11),
+                   color="#1a1a18", zeroline=True, zerolinecolor="#888780",
+                   title="Número de meses"),
+    )
+    st.plotly_chart(fig_cons, use_container_width=True)
+
+    st.divider()
+
+    # ── Bloco 4: Estatísticas descritivas ─────────────────────────────────────
+    st.markdown("<div class='section-title'>estatísticas descritivas dos retornos mensais</div>",
+                unsafe_allow_html=True)
+
+    stats_rows = []
+    for nome, ret in portfolios.items():
+        r = ret.dropna()
+        stats_rows.append({
+            "Portfólio":       nome,
+            "Média mensal":    f"{r.mean()*100:.3f}%",
+            "Mediana mensal":  f"{r.median()*100:.3f}%",
+            "Desvio padrão":   f"{r.std()*100:.3f}%",
+            "Melhor mês":      f"+{r.max()*100:.2f}%",
+            "Pior mês":        f"{r.min()*100:.2f}%",
+            "Assimetria":      f"{float(r.skew()):.3f}",
+            "Curtose":         f"{float(r.kurt()):.3f}",
+            "Meses totais":    str(len(r)),
+        })
+    df_stats = pd.DataFrame(stats_rows).set_index("Portfólio")
+    st.dataframe(df_stats, use_container_width=True)
+    st.caption(
+        "Assimetria positiva = distribuição com mais retornos extremos positivos (bom). "
+        "Curtose alta = caudas pesadas (mais eventos extremos que uma distribuição normal)."
+    )
+
+    st.divider()
+
+    # ── Bloco 5: Distribuição dos retornos mensais (histograma) ───────────────
+    st.markdown("<div class='section-title'>distribuição dos retornos mensais</div>",
+                unsafe_allow_html=True)
+
+    port_sel = st.multiselect(
+        "Selecionar portfólios", list(portfolios.keys()),
+        default=["HRP+BL","CDI","Ibovespa"],
+        key="hist_sel"
+    )
+    fig_hist = go.Figure()
+    for nome in port_sel:
+        ret = portfolios[nome].dropna() * 100
+        fig_hist.add_trace(go.Histogram(
+            x=ret.values, name=nome,
+            nbinsx=40, opacity=0.65,
+            marker_color=cores[nome],
+            hovertemplate=f"<b>{nome}</b><br>Retorno: %{{x:.2f}}%<br>Freq: %{{y}}<extra></extra>",
+        ))
+    fig_hist.update_layout(
+        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+        height=300, barmode="overlay",
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0,r=0,t=8,b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0, font=dict(color="#1a1a18")),
+        xaxis=dict(gridcolor="#e8e6e0", ticksuffix="%",
+                   tickfont=dict(color="#444441",size=11), color="#1a1a18",
+                   title="Retorno mensal (%)"),
+        yaxis=dict(gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441",size=11), color="#1a1a18",
+                   title="Frequência"),
+    )
+    st.plotly_chart(fig_hist, use_container_width=True)
+    st.caption("Distribuição dos retornos mensais. Ideal: assimétrica à direita (cauda positiva mais longa).")
+
+    st.divider()
+
+    # ── Bloco 6: Tabela comparativa HRP+BL vs Customizado ────────────────────
+    if custom_valid_t8:
+        st.markdown("<div class='section-title'>HRP+BL vs portfólio customizado — detalhado</div>",
+                    unsafe_allow_html=True)
+
+        m_c = metrics(c_ret_t8, cdi_aligned)
+        acum_c = ((1+c_ret_t8).cumprod().iloc[-1] - 1) * 100
+
+        comp_rows = {
+            "Retorno acumulado":   (f"+{acum_port:.1f}%",             f"+{acum_c:.1f}%"),
+            "Retorno a.a.":        (f"{m_port['ann_ret']*100:.2f}%",   f"{m_c['ann_ret']*100:.2f}%"),
+            "Volatilidade a.a.":   (f"{m_port['ann_vol']*100:.2f}%",   f"{m_c['ann_vol']*100:.2f}%"),
+            "Sharpe (rf=CDI)":     (f"{m_port['sharpe']:.3f}",         f"{m_c['sharpe']:.3f}"),
+            "Sortino":             (f"{m_port['sortino']:.3f}" if m_port["sortino"] else "—",
+                                    f"{m_c['sortino']:.3f}" if m_c["sortino"] else "—"),
+            "Max drawdown":        (f"{m_port['max_dd']*100:.2f}%",    f"{m_c['max_dd']*100:.2f}%"),
+            "Calmar ratio":        (f"{m_port['calmar']:.3f}",         f"{m_c['calmar']:.3f}"),
+            "VaR 95% mensal":      (f"{m_port['var95']*100:.2f}%",     f"{m_c['var95']*100:.2f}%"),
+            "Meses acima CDI":     (f"{(port_ret > cdi_aligned).sum()} ({(port_ret > cdi_aligned).mean()*100:.0f}%)",
+                                    f"{(c_ret_t8 > cdi_aligned).sum()} ({(c_ret_t8 > cdi_aligned).mean()*100:.0f}%)"),
+            "Meses positivos":     (f"{(port_ret > 0).sum()} ({(port_ret > 0).mean()*100:.0f}%)",
+                                    f"{(c_ret_t8 > 0).sum()} ({(c_ret_t8 > 0).mean()*100:.0f}%)"),
+            "Melhor mês":          (f"+{port_ret.max()*100:.2f}%",     f"+{c_ret_t8.max()*100:.2f}%"),
+            "Pior mês":            (f"{port_ret.min()*100:.2f}%",      f"{c_ret_t8.min()*100:.2f}%"),
+            "Assimetria":          (f"{float(port_ret.skew()):.3f}",   f"{float(c_ret_t8.skew()):.3f}"),
+        }
+        df_comp = pd.DataFrame(comp_rows, index=["HRP+BL","Customizado"]).T
+        df_comp.index.name = "Métrica"
+        st.dataframe(df_comp, use_container_width=True)
+    else:
+        st.info("Configure os pesos na aba Rebalanceamento para ver a comparação com o portfólio customizado.")
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
