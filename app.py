@@ -113,18 +113,49 @@ COLORS  = {a["name"]: a["color"] for a in ASSET_CFG}
 
 # ── Funções utilitárias ──────────────────────────────────────────────────────
 @st.cache_data(ttl=86400, show_spinner=False)
+def fetch_bcb_serie(serie_id, divisor=1.0, max_retries=3, timeout=30):
+    """Busca qualquer série do SGS/BCB com retry automático e timeout generoso."""
+    urls = [
+        f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie_id}/dados?formato=json",
+        f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie_id}/dados/ultimos/1000?formato=json",
+    ]
+    for url in urls:
+        for attempt in range(max_retries):
+            try:
+                r = requests.get(url, timeout=timeout)
+                if r.status_code == 200:
+                    data = r.json()
+                    if data:
+                        df = pd.DataFrame(data)
+                        df["valor"] = (df["valor"].astype(str)
+                                       .str.replace(",",".")
+                                       .astype(float)) / divisor
+                        df["data"] = pd.to_datetime(df["data"], dayfirst=True,
+                                                     errors="coerce")
+                        df = df.dropna(subset=["data","valor"])
+                        df = df.set_index("data").sort_index()
+                        return df
+            except Exception:
+                if attempt < max_retries - 1:
+                    import time; time.sleep(2)
+                continue
+    return None
+
 def fetch_cdi():
     """Busca CDI mensal via API do Banco Central (SGS 4391)."""
-    try:
-        url = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.4391/dados?formato=json"
-        r = requests.get(url, timeout=15)
-        df = pd.DataFrame(r.json())
-        df["data"]  = pd.to_datetime(df["data"], dayfirst=True) + pd.offsets.MonthEnd(0)
-        df["valor"] = df["valor"].astype(float) / 100
-        return df.set_index("data").sort_index()
-    except Exception as e:
-        st.warning(f"Não foi possível buscar o CDI automaticamente: {e}")
-        return None
+    df = fetch_bcb_serie(4391, divisor=100.0)
+    if df is not None:
+        df.index = df.index + pd.offsets.MonthEnd(0)
+        return df
+    return None
+
+def fetch_ipca():
+    """Busca IPCA mensal via API do Banco Central (SGS 433)."""
+    df = fetch_bcb_serie(433, divisor=100.0)
+    if df is not None:
+        df.index = df.index + pd.offsets.MonthEnd(0)
+        return df
+    return None
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_ptax():
@@ -134,36 +165,19 @@ def fetch_ptax():
     # Estratégia 1: SGS 3698 — USD/BRL mensal (média)
     # Estratégia 2: SGS 1 — USD/BRL diário, agrega para mensal
     # Estratégia 3: PTAX Olinda API
-    strategies = [
-        ("SGS 3698", "https://api.bcb.gov.br/dados/serie/bcdata.sgs.3698/dados?formato=json", "mensal"),
-        ("SGS 1",    "https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados?formato=json",    "diario"),
-    ]
+    # Estratégia 1: SGS 3698 — USD/BRL mensal
+    df = fetch_bcb_serie(3698)
+    if df is not None and len(df) > 12:
+        df.index = df.index + pd.offsets.MonthEnd(0)
+        df["retorno"] = df["valor"].pct_change()
+        return df
 
-    for nome, url, freq in strategies:
-        try:
-            r = requests.get(url, timeout=20)
-            if r.status_code != 200:
-                continue
-            data = r.json()
-            if not data:
-                continue
-            df = pd.DataFrame(data)
-            # Tratar vírgula decimal (padrão BCB)
-            df["valor"] = df["valor"].astype(str).str.replace(",", ".").astype(float)
-            df["data"]  = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
-            df = df.dropna(subset=["data","valor"]).set_index("data").sort_index()
-
-            if freq == "diario":
-                # Agregar para mensal usando último valor do mês
-                df = df.resample("ME").last()
-            else:
-                df.index = df.index + pd.offsets.MonthEnd(0)
-
-            df["retorno"] = df["valor"].pct_change()
-            if len(df) > 12:
-                return df
-        except Exception:
-            continue
+    # Estratégia 2: SGS 1 — USD/BRL diário, agrega para mensal
+    df = fetch_bcb_serie(1)
+    if df is not None and len(df) > 12:
+        df = df.resample("ME").last()
+        df["retorno"] = df["valor"].pct_change()
+        return df
 
     # Estratégia 3: Olinda PTAX API (endpoint diferente)
     try:
@@ -342,7 +356,7 @@ def load_demo_series():
     keys = ["IDA Pré","IMA","IHFA","IDA-Geral","Ibovespa","Internac."]
     return {k: gen(*p) for k,p in zip(keys, params)}
 
-with st.spinner("Carregando dados…"):
+with st.spinner("Carregando dados e conectando ao Banco Central…"):
     # CDI
     if use_auto_cdi:
         cdi_raw = fetch_cdi()
@@ -354,13 +368,13 @@ with st.spinner("Carregando dados…"):
         cdi_raw = None
 
     if cdi_raw is None:
-        # CDI simulado
+        # CDI simulado — fallback silencioso na sidebar
         idx = pd.date_range("2009-01-31", periods=208, freq="ME")
         cdi_vals = np.where(idx.year < 2017, 0.011,
                    np.where(idx.year < 2020, 0.005,
                    np.where(idx.year < 2022, 0.003, 0.011)))
         cdi_raw = pd.DataFrame({"valor": cdi_vals}, index=idx)
-        st.sidebar.warning("CDI simulado (sem dados reais)")
+        st.sidebar.info("ℹ️ CDI simulado — API BCB lenta, tente recarregar em instantes")
 
     # Séries de ativos
     series = {}
@@ -382,7 +396,8 @@ with st.spinner("Carregando dados…"):
     # PTAX — buscar automaticamente ou via upload
     ptax_data = None
     if use_auto_ptax:
-        ptax_data = fetch_ptax()
+        with st.spinner("Buscando PTAX..."):
+            ptax_data = fetch_ptax()
         if ptax_data is not None:
             ptax_src = "📡 PTAX via BCB"
         else:
@@ -425,6 +440,30 @@ with st.spinner("Carregando dados…"):
     cdi_cum  = (1 + cdi_aligned).cumprod() * 100
 
     rf_ann = m_port["rf_ann"]
+
+    # ── IPCA+6 sintético ──────────────────────────────────────────────────────
+    # Construção: (1 + IPCA_mensal) × (1 + 6%/12) - 1 acumulado
+    # IPCA via API BCB (série 433) ou fallback com média histórica
+    ipca_raw = fetch_ipca()
+    if ipca_raw is not None:
+        ipca_ret = ipca_raw["valor"].reindex(common_idx).ffill().fillna(0.004)
+        ipca_src = "BCB"
+    else:
+        # Fallback: IPCA médio histórico estimado por período
+        idx_yr = common_idx.year
+        ipca_vals = np.where(idx_yr < 2016, 0.006,
+                    np.where(idx_yr < 2019, 0.003,
+                    np.where(idx_yr < 2022, 0.004, 0.005)))
+        ipca_ret = pd.Series(ipca_vals, index=common_idx)
+        ipca_src = "estimado"
+
+    # IPCA+6: retorno mensal = (1+IPCA) × (1+6%/12) - 1
+    premio_anual = 0.06
+    premio_mensal = (1 + premio_anual) ** (1/12) - 1
+    ipca6_ret = (1 + ipca_ret) * (1 + premio_mensal) - 1
+    ipca6_cum = (1 + ipca6_ret).cumprod() * 100
+    acum_ipca6 = (ipca6_cum.iloc[-1] / 100 - 1) * 100
+    ann_ret_ipca6 = (1 + ipca6_ret.mean()) ** 12 - 1
 
 # ── Header ────────────────────────────────────────────────────────────────────
 col_h1, col_h2 = st.columns([3, 1])
@@ -609,6 +648,8 @@ with tab1:
     show_ibov   = cb_col2.checkbox("Ibovespa",             value=True)
     show_igual  = cb_col3.checkbox("1/N igual",            value=False)
     show_custom = cb_col4.checkbox("Portfólio customizado",value=True)
+    show_ipca6  = st.checkbox("IPCA+6 sintético",          value=True,
+                               help=f"Construção: IPCA mensal (BCB) + 6% a.a. | Fonte IPCA: {ipca_src}")
 
     if show_custom and not custom_valid:
         st.warning("⚠️ Os pesos na aba Rebalanceamento não somam 100%. Ajuste antes de comparar.")
@@ -648,6 +689,10 @@ with tab1:
     if show_custom and custom_valid and custom_f is not None:
         fig.add_trace(go.Scatter(x=custom_f.index, y=custom_f.values.round(2),
             name="Portfólio customizado", line=dict(color="#E24B4A", width=2, dash="dashdot")))
+    if show_ipca6:
+        ipca6_f = rebase(ipca6_cum, idx_filtrado)
+        fig.add_trace(go.Scatter(x=ipca6_f.index, y=ipca6_f.values.round(2),
+            name="IPCA+6%", line=dict(color="#C4770A", width=1.5, dash="longdashdot")))
 
     # ── Marcações de eventos de cauda ──
     show_events = st.checkbox("Marcar eventos de cauda no gráfico", value=True, key="ev_acum")
@@ -701,6 +746,7 @@ with tab1:
     ann_ibov   = ibov_cum.resample("YE").last().pct_change().dropna() * 100
     ann_igual  = eq_cum.resample("YE").last().pct_change().dropna() * 100
     ann_custom = custom_cum.resample("YE").last().pct_change().dropna() * 100
+    ann_ipca6  = ipca6_cum.resample("YE").last().pct_change().dropna() * 100
     years = sorted(set(ann_port.index.year) & set(ann_cdi.index.year) & set(ann_ibov.index.year))
 
     def get_ann(series_ann, yr):
@@ -727,6 +773,10 @@ with tab1:
         fig2.add_trace(go.Bar(x=[str(y) for y in years],
             y=[get_ann(ann_custom, y) for y in years],
             name="Portfólio customizado", marker_color="rgba(226,75,74,0.7)"))
+    if show_ipca6:
+        fig2.add_trace(go.Bar(x=[str(y) for y in years],
+            y=[get_ann(ann_ipca6, y) for y in years],
+            name="IPCA+6%", marker_color="rgba(196,119,10,0.6)"))
 
     fig2.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
@@ -775,18 +825,39 @@ with tab3:
     st.markdown("<div class='section-title'>Comparativo de métricas</div>", unsafe_allow_html=True)
 
     rows = {
-        "Retorno a.a.":      (f"{m_port['ann_ret']*100:.2f}%", f"{rf_ann*100:.2f}%",        f"{m_ibov['ann_ret']*100:.2f}%"),
-        "Volatilidade a.a.": (f"{m_port['ann_vol']*100:.2f}%", "~0%",                        f"{m_ibov['ann_vol']*100:.2f}%"),
-        "Sharpe (rf=CDI)":   (f"{m_port['sharpe']:.3f}",       "—",                          f"{m_ibov['sharpe']:.3f}"),
-        "Sortino":           (f"{m_port['sortino']:.3f}" if m_port["sortino"] else "—", "—", f"{m_ibov['sortino']:.3f}" if m_ibov["sortino"] else "—"),
-        "Calmar ratio":      (f"{m_port['calmar']:.3f}",        "—",                          f"{m_ibov['calmar']:.3f}"),
-        "Max drawdown":      (f"{m_port['max_dd']*100:.2f}%",   "0%",                         f"{m_ibov['max_dd']*100:.2f}%"),
-        "VaR 95% (mensal)":  (f"{m_port['var95']*100:.2f}%",    "positivo",                   f"{m_ibov['var95']*100:.2f}%"),
-        "Acumulado":         (f"+{acum_port:.1f}%",             f"+{acum_cdi:.1f}%",           f"+{acum_ibov:.1f}%"),
+        "Retorno a.a.": (
+            f"{m_port['ann_ret']*100:.2f}%", f"{rf_ann*100:.2f}%",
+            f"{m_ibov['ann_ret']*100:.2f}%", f"{ann_ret_ipca6*100:.2f}%"),
+        "Volatilidade a.a.": (
+            f"{m_port['ann_vol']*100:.2f}%", "~0%",
+            f"{m_ibov['ann_vol']*100:.2f}%", "baixa"),
+        "Sharpe (rf=CDI)": (
+            f"{m_port['sharpe']:.3f}", "—",
+            f"{m_ibov['sharpe']:.3f}", "—"),
+        "Sortino": (
+            f"{m_port['sortino']:.3f}" if m_port["sortino"] else "—", "—",
+            f"{m_ibov['sortino']:.3f}" if m_ibov["sortino"] else "—", "—"),
+        "Calmar ratio": (
+            f"{m_port['calmar']:.3f}", "—",
+            f"{m_ibov['calmar']:.3f}", "—"),
+        "Max drawdown": (
+            f"{m_port['max_dd']*100:.2f}%", "0%",
+            f"{m_ibov['max_dd']*100:.2f}%", "~0%"),
+        "VaR 95% mensal": (
+            f"{m_port['var95']*100:.2f}%", "positivo",
+            f"{m_ibov['var95']*100:.2f}%", "positivo"),
+        "Acumulado": (
+            f"+{acum_port:.1f}%", f"+{acum_cdi:.1f}%",
+            f"+{acum_ibov:.1f}%", f"+{acum_ipca6:.1f}%"),
     }
-    df_metrics = pd.DataFrame(rows, index=["HRP+BL","CDI","Ibovespa"]).T
+    df_metrics = pd.DataFrame(rows, index=["HRP+BL","CDI","Ibovespa","IPCA+6%"]).T
     df_metrics.index.name = "Métrica"
     st.dataframe(df_metrics, use_container_width=True)
+
+    st.caption(
+        f"IPCA+6% sintético: IPCA mensal via BCB (fonte: {ipca_src}) + 6% a.a. | "
+        "Representa o retorno de uma NTN-B com prêmio real de 6% sobre a inflação."
+    )
 
     st.divider()
     st.markdown("<div class='section-title'>Alocação por ativo</div>", unsafe_allow_html=True)
@@ -1326,6 +1397,8 @@ with tab6:
     fig_ev.add_trace(go.Bar(x=ev_names, y=ev_cdi,  name="CDI",      marker_color="rgba(29,158,117,0.6)"))
     fig_ev.add_trace(go.Bar(x=ev_names, y=ev_ibov, name="Ibovespa", marker_color="rgba(186,117,23,0.5)"))
     fig_ev.add_trace(go.Bar(x=ev_names, y=ev_igual,name="1/N igual", marker_color="rgba(127,119,221,0.6)"))
+    ev_ipca6 = [float(r.get("IPCA+6%","0").replace("%","").replace("+","")) if r.get("IPCA+6%","—") != "—" else 0 for r in rows_ev]
+    fig_ev.add_trace(go.Bar(x=ev_names, y=ev_ipca6, name="IPCA+6%", marker_color="rgba(196,119,10,0.6)"))
     if show_custom_ev:
         ev_cust = [float(r["Customizado"].replace("%","").replace("+",""))
                    if r.get("Customizado","—") != "—" else 0 for r in rows_ev]
