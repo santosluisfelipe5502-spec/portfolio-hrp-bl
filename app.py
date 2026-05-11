@@ -206,26 +206,79 @@ def fetch_ptax():
     return None
 
 def read_uploaded(file):
-    """Lê XLS/XLSX/CSV em DataFrame com duas colunas: data, valor."""
+    """Lê XLS/XLSX/CSV em DataFrame com duas colunas: data, valor.
+    Suporta formato ANBIMA (código, data, valor), Investing.com (Data, Último, ...)
+    e outros formatos com detecção automática.
+    """
     name = file.name.lower()
     try:
         if name.endswith(".csv"):
-            df = pd.read_csv(file, sep=None, engine="python")
+            # Tentar separadores comuns — SEM thousands para não corromper datas
+            for sep in [",", ";", "\t", None]:
+                try:
+                    file.seek(0)
+                    df = pd.read_csv(file, sep=sep, engine="python")
+                    if df.shape[1] >= 2:
+                        break
+                except Exception:
+                    continue
         else:
             df = pd.read_excel(file, engine="openpyxl")
-        # Tentar detectar coluna de data e valor
+
         df.columns = [str(c).strip() for c in df.columns]
-        date_col = next((c for c in df.columns if "data" in c.lower() or "date" in c.lower()), df.columns[0])
-        val_col  = next((c for c in df.columns if c != date_col), df.columns[-1])
-        # Tentar col[1] e col[2] (formato ANBIMA: código, data, valor)
-        if df.shape[1] >= 3:
-            date_col = df.columns[1]
-            val_col  = df.columns[2]
-        df["_data"]  = pd.to_datetime(df[date_col].astype(str).str.split(" ").str[0], dayfirst=True, errors="coerce")
-        df["_valor"] = pd.to_numeric(df[val_col], errors="coerce")
-        df = df.dropna(subset=["_data","_valor"])[["_data","_valor"]]
-        df.columns = ["data","valor"]
-        return df.set_index("data").sort_index()
+
+        # ── Detectar coluna de data ──
+        date_col = next(
+            (c for c in df.columns if any(k in c.lower()
+             for k in ["data","date","dt","período","periodo"])),
+            df.columns[0]
+        )
+
+        # ── Detectar coluna de valor ──
+        # Prioridade: "Último"/"Ultimo" (Investing.com) > "valor"/"value" > col[2] (ANBIMA)
+        val_col = None
+        for pref in ["último", "ultimo", "fechamento", "close", "valor", "value", "cota"]:
+            match = next((c for c in df.columns
+                          if pref in c.lower() and c != date_col), None)
+            if match:
+                val_col = match
+                break
+        if val_col is None:
+            # Fallback ANBIMA: col[2] se tiver 3+ colunas
+            val_col = df.columns[2] if df.shape[1] >= 3 else df.columns[1]
+
+        # ── Parsear data ──
+        # Suporta DD.MM.YYYY (Investing.com) e DD/MM/YYYY (ANBIMA/BCB)
+        raw_dates = df[date_col].astype(str).str.strip().str.split(" ").str[0]
+        parsed_dates = None
+        for fmt in ["%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y"]:
+            try:
+                parsed_dates = pd.to_datetime(raw_dates, format=fmt, errors="coerce")
+                if parsed_dates.notna().sum() > len(raw_dates) * 0.8:
+                    break
+            except Exception:
+                continue
+        if parsed_dates is None:
+            parsed_dates = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
+
+        # ── Parsear valor ──
+        # Se já for numérico (Investing.com), usar direto
+        if pd.api.types.is_numeric_dtype(df[val_col]):
+            parsed_vals = pd.to_numeric(df[val_col], errors="coerce")
+        else:
+            # Tratar formato BR: 1.234,56 → 1234.56
+            raw_vals = df[val_col].astype(str).str.strip()
+            raw_vals = (raw_vals
+                        .str.replace(r"[^0-9,.-]", "", regex=True)
+                        .str.replace(".", "", regex=False)
+                        .str.replace(",", ".", regex=False))
+            parsed_vals = pd.to_numeric(raw_vals, errors="coerce")
+
+        result = pd.DataFrame({"data": parsed_dates, "valor": parsed_vals})
+        result = result.dropna(subset=["data","valor"])
+        result = result.set_index("data").sort_index()
+        return result
+
     except Exception as e:
         st.error(f"Erro ao ler {file.name}: {e}")
         return None
@@ -312,8 +365,10 @@ with st.sidebar:
     for cfg in ASSET_CFG:
         if cfg["key"] == "INTL":
             continue
+        label = (f"{cfg['name']} (CSV Investing.com ou Excel B3)"
+                 if cfg["name"] == "Ibovespa" else cfg["name"])
         uploads[cfg["name"]] = st.file_uploader(
-            cfg["name"], type=["csv","xls","xlsx"], key=cfg["key"]
+            label, type=["csv","xls","xlsx"], key=cfg["key"]
         )
 
     st.markdown("**Internacional** (40% SPY + 60% TLT)")
