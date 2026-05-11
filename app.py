@@ -219,6 +219,25 @@ def fetch_ptax():
 
     return None
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_yfinance(ticker, start="2002-01-01"):
+    """Busca série mensal de qualquer ticker via yfinance.
+    Funciona para SPY, TLT, ^BVSP e outros.
+    """
+    try:
+        import yfinance as yf
+        df = yf.download(ticker, start=start, interval="1mo",
+                         auto_adjust=True, progress=False)
+        if df is None or len(df) == 0:
+            return None
+        close = df["Close"].squeeze()
+        close.index = close.index + pd.offsets.MonthEnd(0)
+        close.index = close.index.tz_localize(None)
+        result = pd.DataFrame({"valor": close.values}, index=close.index)
+        return result.dropna().sort_index()
+    except Exception:
+        return None
+
 def read_uploaded(file):
     """Lê XLS/XLSX/CSV em DataFrame com duas colunas: data, valor.
     Suporta formato ANBIMA (código, data, valor), Investing.com (Data, Último, ...)
@@ -546,7 +565,15 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
                 has_real = True
                 continue
 
-        # 2. Arquivo na pasta dados/ do repositório
+        # 2. yfinance automático (só para Ibovespa)
+        if nome == "Ibovespa":
+            ibov_yf = fetch_yfinance("^BVSP", start="2005-01-01")
+            if ibov_yf is not None and len(ibov_yf) > 12:
+                series[nome] = to_monthly(ibov_yf)
+                has_real = True
+                continue
+
+        # 3. Arquivo na pasta dados/ do repositório
         repo_df, repo_path = load_from_repo(REPO_FILES.get(nome, nome))
         if repo_df is not None:
             raw = read_from_df(repo_df, repo_path)
@@ -555,7 +582,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
                 has_real = True
                 continue
 
-        # 3. Fallback: dados simulados
+        # 4. Fallback: dados simulados
         series[nome] = demo[nome]
 
     # PTAX — buscar automaticamente ou via upload
@@ -579,10 +606,18 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     else:
         ptax_src = "⚠️ PTAX desabilitada — usando USD puro"
 
-    # Internacional — mesma prioridade: upload > pasta dados/ > demo
+    # Internacional — prioridade: upload > yfinance automático > repo > demo
     spy_df, tlt_df = None, None
+
     if spy_file:
         spy_df = read_uploaded(spy_file)
+
+    if spy_df is None:
+        # Tentar yfinance automático
+        spy_yf = fetch_yfinance("SPY")
+        if spy_yf is not None and len(spy_yf) > 12:
+            spy_df = spy_yf
+
     if spy_df is None:
         repo_spy, rp = load_from_repo("SPY")
         if repo_spy is not None:
@@ -590,6 +625,12 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
 
     if tlt_file:
         tlt_df = read_uploaded(tlt_file)
+
+    if tlt_df is None:
+        tlt_yf = fetch_yfinance("TLT")
+        if tlt_yf is not None and len(tlt_yf) > 12:
+            tlt_df = tlt_yf
+
     if tlt_df is None:
         repo_tlt, rp = load_from_repo("TLT")
         if repo_tlt is not None:
@@ -640,7 +681,10 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
 # ── Header ────────────────────────────────────────────────────────────────────
 col_h1, col_h2 = st.columns([3, 1])
 with col_h1:
-    data_src = "📡 CDI via BCB" if (use_auto_cdi and fetch_cdi() is not None) else "📂 CDI local"
+    _cdi_ok = fetch_cdi() is not None
+    _spy_ok = fetch_yfinance("SPY") is not None
+    data_src = "📡 CDI via BCB" if (use_auto_cdi and _cdi_ok) else "📂 CDI local"
+    intl_src = "📡 SPY+TLT via Yahoo" if _spy_ok else "📂 SPY+TLT local"
     real_tag = "📂 dados reais" if has_real else "🔬 dados simulados"
     # Verificar se veio do repo
     import os
@@ -855,9 +899,10 @@ with tab1:
         idx_filtrado = common_idx
 
     def rebase(series_cum, idx):
+        """Rebase para % de retorno acumulado (0% = início do período)."""
         s = series_cum[series_cum.index.isin(idx)]
         if len(s) == 0: return s
-        return (s / s.iloc[0]) * 100
+        return ((s / s.iloc[0]) - 1) * 100   # 0% no início, % de retorno
 
     port_f   = rebase(port_cum,   idx_filtrado)
     cdi_f    = rebase(cdi_cum,    idx_filtrado)
@@ -916,7 +961,9 @@ with tab1:
         font=dict(color="#1a1a18"),
         margin=dict(l=0,r=40,t=8,b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color="#1a1a18")),
-        yaxis=dict(tickprefix="R$", gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441", size=11), color="#1a1a18",
+                   hoverformat=".1f"),
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -1651,7 +1698,7 @@ with tab6:
         font=dict(color="#1a1a18"),
         margin=dict(l=0,r=40,t=8,b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color="#1a1a18")),
-        yaxis=dict(tickprefix="R$", gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18", hoverformat=".1f"),
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
     st.plotly_chart(fig_ev2, use_container_width=True)
