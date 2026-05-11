@@ -409,6 +409,79 @@ with st.sidebar:
 
 # ── Carga de dados ────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
+def load_from_repo(filename):
+    """Tenta carregar arquivo da pasta dados/ do repositório.
+    Suporta múltiplas extensões automaticamente.
+    """
+    import os
+    bases = ["dados", "data", "."]
+    exts  = ["", ".csv", ".xls", ".xlsx"]
+    for base in bases:
+        for ext in exts:
+            path = os.path.join(base, filename + ext) if ext else os.path.join(base, filename)
+            if os.path.exists(path):
+                try:
+                    if path.endswith(".csv"):
+                        # Detectar separador
+                        with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
+                            sample = f.read(2048)
+                        sep = ";" if sample.count(";") > sample.count(",") else ","
+                        df = pd.read_csv(path, sep=sep, engine="python")
+                    else:
+                        df = pd.read_excel(path, engine="openpyxl")
+                    return df, path
+                except Exception:
+                    continue
+    return None, None
+
+def read_from_df(df, path):
+    """Converte DataFrame bruto para série (data, valor) usando o mesmo
+    parser do read_uploaded, mas a partir de um DataFrame já carregado."""
+    try:
+        df.columns = [str(c).strip() for c in df.columns]
+        date_col = next(
+            (c for c in df.columns if any(k in c.lower()
+             for k in ["data","date","dt","período","periodo"])),
+            df.columns[0]
+        )
+        val_col = None
+        for pref in ["último","ultimo","fechamento","close","valor","value","cota"]:
+            match = next((c for c in df.columns
+                          if pref in c.lower() and c != date_col), None)
+            if match:
+                val_col = match
+                break
+        if val_col is None:
+            val_col = df.columns[2] if df.shape[1] >= 3 else df.columns[1]
+
+        raw_dates = df[date_col].astype(str).str.strip().str.split(" ").str[0]
+        parsed_dates = None
+        for fmt in ["%d.%m.%Y","%d/%m/%Y","%Y-%m-%d","%m/%d/%Y"]:
+            try:
+                parsed_dates = pd.to_datetime(raw_dates, format=fmt, errors="coerce")
+                if parsed_dates.notna().sum() > len(raw_dates)*0.8:
+                    break
+            except Exception:
+                continue
+        if parsed_dates is None:
+            parsed_dates = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
+
+        if pd.api.types.is_numeric_dtype(df[val_col]):
+            parsed_vals = pd.to_numeric(df[val_col], errors="coerce")
+        else:
+            raw_vals = (df[val_col].astype(str).str.strip()
+                        .str.replace(r"[^0-9,.-]","",regex=True)
+                        .str.replace(".","",regex=False)
+                        .str.replace(",",".",regex=False))
+            parsed_vals = pd.to_numeric(raw_vals, errors="coerce")
+
+        result = pd.DataFrame({"data":parsed_dates,"valor":parsed_vals})
+        result = result.dropna(subset=["data","valor"]).set_index("data").sort_index()
+        return result if len(result) > 0 else None
+    except Exception:
+        return None
+
+@st.cache_data(show_spinner=False)
 def load_demo_series():
     """Gera séries demo quando não há upload."""
     def gen(ret, vol, n, s):
@@ -446,21 +519,44 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
         st.sidebar.info("ℹ️ CDI simulado — API BCB lenta, tente recarregar em instantes")
 
     # Séries de ativos
+    # Ordem de prioridade: 1) upload manual  2) pasta dados/ do repo  3) demo simulado
     series = {}
     demo = load_demo_series()
     has_real = False
 
+    REPO_FILES = {
+        "IDA Pré":   "IDKAPRE5A",
+        "IMA":       "IMA",
+        "IHFA":      "IHFA",
+        "IDA-Geral": "IDAGERAL",
+        "Ibovespa":  "Ibovespa",
+    }
+
     for cfg in ASSET_CFG:
         if cfg["key"] == "INTL":
             continue
-        f = uploads.get(cfg["name"])
+        nome = cfg["name"]
+
+        # 1. Upload manual (prioridade máxima)
+        f = uploads.get(nome)
         if f:
             raw = read_uploaded(f)
             if raw is not None:
-                series[cfg["name"]] = to_monthly(raw)
+                series[nome] = to_monthly(raw)
                 has_real = True
                 continue
-        series[cfg["name"]] = demo[cfg["name"]]
+
+        # 2. Arquivo na pasta dados/ do repositório
+        repo_df, repo_path = load_from_repo(REPO_FILES.get(nome, nome))
+        if repo_df is not None:
+            raw = read_from_df(repo_df, repo_path)
+            if raw is not None:
+                series[nome] = to_monthly(raw)
+                has_real = True
+                continue
+
+        # 3. Fallback: dados simulados
+        series[nome] = demo[nome]
 
     # PTAX — buscar automaticamente ou via upload
     ptax_data = None
@@ -483,15 +579,27 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     else:
         ptax_src = "⚠️ PTAX desabilitada — usando USD puro"
 
-    # Internacional
-    if spy_file and tlt_file:
+    # Internacional — mesma prioridade: upload > pasta dados/ > demo
+    spy_df, tlt_df = None, None
+    if spy_file:
         spy_df = read_uploaded(spy_file)
+    if spy_df is None:
+        repo_spy, rp = load_from_repo("SPY")
+        if repo_spy is not None:
+            spy_df = read_from_df(repo_spy, rp)
+
+    if tlt_file:
         tlt_df = read_uploaded(tlt_file)
-        if spy_df is not None and tlt_df is not None:
-            spy_m = to_monthly(spy_df)
-            tlt_m = to_monthly(tlt_df)
-            series["Internac."] = calc_intl(spy_m, tlt_m, spy_w, tlt_w, ptax_data)
-            has_real = True
+    if tlt_df is None:
+        repo_tlt, rp = load_from_repo("TLT")
+        if repo_tlt is not None:
+            tlt_df = read_from_df(repo_tlt, rp)
+
+    if spy_df is not None and tlt_df is not None:
+        spy_m = to_monthly(spy_df)
+        tlt_m = to_monthly(tlt_df)
+        series["Internac."] = calc_intl(spy_m, tlt_m, spy_w, tlt_w, ptax_data)
+        has_real = True
     else:
         series["Internac."] = demo["Internac."]
 
@@ -534,6 +642,16 @@ col_h1, col_h2 = st.columns([3, 1])
 with col_h1:
     data_src = "📡 CDI via BCB" if (use_auto_cdi and fetch_cdi() is not None) else "📂 CDI local"
     real_tag = "📂 dados reais" if has_real else "🔬 dados simulados"
+    # Verificar se veio do repo
+    import os
+    repo_ok = os.path.exists("dados") or any(
+        os.path.exists(f) for f in ["IHFA.xls","IHFA.xlsx","IHFA.csv","dados/IHFA.xls"]
+    )
+    if has_real and repo_ok and not any([
+        uploads.get("IDA Pré"), uploads.get("IMA"), uploads.get("IHFA"),
+        uploads.get("IDA-Geral"), uploads.get("Ibovespa")
+    ]):
+        real_tag = "📁 dados do repositório"
     st.markdown(f"""
     <h2 style='margin:0;font-size:24px;font-weight:500;color:#1a1a18'>
         HRP + Black-Litterman
@@ -642,8 +760,8 @@ TAIL_EVENTS = [
      "desc": "Paralisação nacional, pressão inflacionária e incerteza política pré-eleitoral.", "tipo": "Doméstico"},
     {"name": "Eleições 2018",           "start": "2018-09-30", "end": "2018-10-31", "color": "#378ADD",
      "desc": "Alta volatilidade eleitoral, rali de ativos de risco após resultado.", "tipo": "Doméstico"},
-    {"name": "COVID-19",                "start": "2020-02-29", "end": "2020-04-30", "color": "#7F77DD",
-     "desc": "Crash global sincronizado, fuga para liquidez, colapso de ativos de risco.", "tipo": "Global"},
+    {"name": "COVID-19",                "start": "2020-01-31", "end": "2020-03-31", "color": "#7F77DD",
+     "desc": "Crash global sincronizado, fuga para liquidez, colapso de ativos de risco. Ibov −29.9% em mar/20.", "tipo": "Global"},
     {"name": "Invasão da Ucrânia",      "start": "2022-01-31", "end": "2022-03-31", "color": "#888780",
      "desc": "Choque de commodities, inflação global, ciclo de alta de juros nos EUA.", "tipo": "Global"},
     {"name": "Crise SVB",               "start": "2023-02-28", "end": "2023-03-31", "color": "#1D9E75",
