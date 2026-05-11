@@ -1739,14 +1739,14 @@ with tab8:
         name="Meses acima do CDI",
         marker_color=[cores[n] for n in nomes_graf],
         text=[f"{v} ({v/(v+abaixo_vals[i])*100:.0f}%)" for i,v in enumerate(acima_vals)],
-        textposition="outside", textfont=dict(color="#1a1a18", size=11),
+        textposition="outside",
     ))
     fig_cons.add_trace(go.Bar(
         x=nomes_graf, y=[-v for v in abaixo_vals],
         name="Meses abaixo do CDI",
         marker_color=[cores[n]+"88" for n in nomes_graf],
         text=[f"-{v}" for v in abaixo_vals],
-        textposition="outside", textfont=dict(color="#A32D2D", size=11),
+        textposition="outside",
     ))
     fig_cons.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
