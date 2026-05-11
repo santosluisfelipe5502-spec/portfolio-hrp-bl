@@ -1738,16 +1738,25 @@ with tab8:
         x=nomes_graf, y=acima_vals,
         name="Meses acima do CDI",
         marker_color=[cores[n] for n in nomes_graf],
-        text=[f"{v} ({v/(v+abaixo_vals[i])*100:.0f}%)" for i,v in enumerate(acima_vals)],
-        textposition="outside",
     ))
     fig_cons.add_trace(go.Bar(
         x=nomes_graf, y=[-v for v in abaixo_vals],
         name="Meses abaixo do CDI",
         marker_color=[cores[n]+"88" for n in nomes_graf],
-        text=[f"-{v}" for v in abaixo_vals],
-        textposition="outside",
     ))
+    # Anotações manuais acima/abaixo das barras
+    for i, n in enumerate(nomes_graf):
+        pct_a = acima_vals[i] / (acima_vals[i] + abaixo_vals[i]) * 100
+        fig_cons.add_annotation(
+            x=n, y=acima_vals[i] + 3,
+            text=f"{acima_vals[i]} ({pct_a:.0f}%)",
+            showarrow=False, font=dict(size=11, color=cores[n]), yanchor="bottom"
+        )
+        fig_cons.add_annotation(
+            x=n, y=-abaixo_vals[i] - 3,
+            text=f"{abaixo_vals[i]} ({100-pct_a:.0f}%)",
+            showarrow=False, font=dict(size=11, color="#A32D2D"), yanchor="top"
+        )
     fig_cons.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
         height=320, barmode="overlay",
