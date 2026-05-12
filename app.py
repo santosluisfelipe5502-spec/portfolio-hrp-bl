@@ -115,10 +115,10 @@ div[data-testid="stHorizontalBlock"]{gap:12px}
 
 # ── Constantes ───────────────────────────────────────────────────────────────
 ASSET_CFG = [
-    {"name": "IDA Pré",    "key": "IDKAPRE5A", "color": "#E24B4A", "cluster": "Renda fixa", "w": 0.268, "vol": 0.05},
+    {"name": "IRF-M",      "key": "IRFM",       "color": "#E24B4A", "cluster": "Renda fixa", "w": 0.268, "vol": 0.04},
     {"name": "IMA",        "key": "IMA",        "color": "#1D9E75", "cluster": "Renda fixa", "w": 0.188, "vol": 0.07},
     {"name": "IHFA",       "key": "IHFA",       "color": "#378ADD", "cluster": "Âncora",     "w": 0.172, "vol": 0.06},
-    {"name": "IDA-Geral",  "key": "IDAGERAL",   "color": "#888780", "cluster": "Âncora",     "w": 0.144, "vol": 0.03},
+    {"name": "IDA-DI",     "key": "IDADI",      "color": "#888780", "cluster": "Âncora",     "w": 0.144, "vol": 0.02},
     {"name": "Ibovespa",   "key": "IBOV",       "color": "#BA7517", "cluster": "Equity",     "w": 0.145, "vol": 0.24},
     {"name": "Internac.",  "key": "INTL",       "color": "#7F77DD", "cluster": "Equity",     "w": 0.083, "vol": 0.184},
 ]
@@ -512,9 +512,9 @@ def load_demo_series():
             arr.append(round(v, 4))
         idx = pd.date_range("2009-01-31", periods=n, freq="ME")
         return pd.DataFrame({"valor": arr}, index=idx)
-    params = [(0.085,0.06,208,1),(0.095,0.07,208,2),(0.085,0.06,208,3),
-              (0.132,0.03,208,4),(0.092,0.238,208,5),(0.118,0.184,208,6)]
-    keys = ["IDA Pré","IMA","IHFA","IDA-Geral","Ibovespa","Internac."]
+    params = [(0.085,0.04,208,1),(0.095,0.07,208,2),(0.085,0.06,208,3),
+              (0.125,0.02,208,4),(0.092,0.238,208,5),(0.118,0.184,208,6)]
+    keys = ["IRF-M","IMA","IHFA","IDA-DI","Ibovespa","Internac."]
     return {k: gen(*p) for k,p in zip(keys, params)}
 
 with st.spinner("Carregando dados e conectando ao Banco Central…"):
@@ -544,10 +544,10 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     has_real = False
 
     REPO_FILES = {
-        "IDA Pré":   "IDKAPRE5A",
+        "IRF-M":     "IRFM",
         "IMA":       "IMA",
         "IHFA":      "IHFA",
-        "IDA-Geral": "IDAGERAL",
+        "IDA-DI":    "IDADI",
         "Ibovespa":  "Ibovespa",
     }
 
@@ -644,6 +644,47 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     else:
         series["Internac."] = demo["Internac."]
 
+    # ── Séries diárias para monitoramento ────────────────────────────────────
+    # Carrega as séries no formato diário (sem agregar para mensal)
+    daily_series = {}
+    DAILY_FILES = {"IRF-M":"IRFM","IMA":"IMA","IHFA":"IHFA","IDA-DI":"IDADI"}
+    for cfg in ASSET_CFG:
+        if cfg["key"] in ["IBOV","INTL"]:
+            continue
+        nome = cfg["name"]
+        f_up = uploads.get(nome)
+        if f_up:
+            raw = read_uploaded(f_up)
+            if raw is not None:
+                daily_series[nome] = raw
+                continue
+        repo_df, rp = load_from_repo(DAILY_FILES.get(nome, nome))
+        if repo_df is not None:
+            raw = read_from_df(repo_df, rp)
+            if raw is not None:
+                daily_series[nome] = raw
+
+    # Ibovespa diário via yfinance
+    ibov_daily_yf = fetch_yfinance("^BVSP", start="2005-01-01")
+    if ibov_daily_yf is not None:
+        daily_series["Ibovespa"] = ibov_daily_yf
+
+    # Internacional diário via yfinance
+    spy_d = fetch_yfinance("SPY")
+    tlt_d = fetch_yfinance("TLT")
+    if spy_d is not None and tlt_d is not None:
+        ret_spy_d = spy_d["valor"].pct_change()
+        ret_tlt_d = tlt_d["valor"].pct_change()
+        # Alinhar
+        idx_d = ret_spy_d.index.intersection(ret_tlt_d.index)
+        ret_intl_d = 0.40*ret_spy_d.reindex(idx_d) + 0.60*ret_tlt_d.reindex(idx_d)
+        if ptax_data is not None:
+            ptax_d = ptax_data["retorno"].reindex(idx_d, method="ffill").fillna(0)
+            ret_intl_d = (1+ret_intl_d)*(1+ptax_d)-1
+        intl_daily = (1+ret_intl_d).cumprod()*100
+        daily_series["Internac."] = pd.DataFrame({"valor": intl_daily.values},
+                                                   index=intl_daily.index)
+
     # Computar portfólio
     start_ts = pd.Timestamp(start_date) + pd.offsets.MonthEnd(0)
     end_ts   = pd.Timestamp(end_date)   + pd.offsets.MonthEnd(0)
@@ -692,8 +733,8 @@ with col_h1:
         os.path.exists(f) for f in ["IHFA.xls","IHFA.xlsx","IHFA.csv","dados/IHFA.xls"]
     )
     if has_real and repo_ok and not any([
-        uploads.get("IDA Pré"), uploads.get("IMA"), uploads.get("IHFA"),
-        uploads.get("IDA-Geral"), uploads.get("Ibovespa")
+        uploads.get("IRF-M"), uploads.get("IMA"), uploads.get("IHFA"),
+        uploads.get("IDA-DI"), uploads.get("Ibovespa")
     ]):
         real_tag = "📁 dados do repositório"
     st.markdown(f"""
@@ -830,7 +871,7 @@ def hex_to_rgba(hex_color, alpha=0.5):
     return hex_color
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📈 Retorno acumulado",
     "📉 Drawdown",
     "📊 Métricas",
@@ -839,6 +880,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "⚡ Eventos de cauda",
     "📦 Ativos individuais",
     "🔬 Análise comparativa",
+    "📡 Monitoramento diário",
 ])
 
 # ── Tab 1: Retorno acumulado ──────────────────────────────────────────────────
@@ -1332,14 +1374,14 @@ with tab5:
     # CDI implícito no cenário (Selic menos haircut de liquidez diária ~0.1%)
     cdi_sc = selic - 0.1
 
-    # ── IDA Pré (pré-fixado duration) ──
-    # O pré carrega a taxa de juro no momento da compra. Em cenário de alta de juros,
-    # o preço do título cai (efeito mark-to-market da duration).
-    # Duration média do IDA Pré ≈ 3-4 anos → DV01 relevante.
-    duration_pre = 3.5
-    delta_selic  = selic - 13.75   # variação vs cenário base
-    mtm_pre      = -duration_pre * delta_selic * 0.6   # impacto MTM simplificado
-    ret_pre      = max(-15, min(25, selic * 0.82 + mtm_pre))
+    # ── IRF-M (títulos públicos prefixados — LTN e NTN-F) ──
+    # Duration variável de mercado ≈ 2-3 anos (menor que IDKA Pré 5A).
+    # Mais representativo do mercado real de renda fixa prefixada.
+    # Em alta de juros, preço cai pelo MTM, mas duration menor = menos sensível.
+    duration_irfm = 2.5
+    delta_selic   = selic - 13.75   # variação vs cenário base
+    mtm_irfm      = -duration_irfm * delta_selic * 0.6
+    ret_pre       = max(-12, min(22, selic * 0.84 + mtm_irfm))
 
     # ── IMA-Geral (inflação — NTN-B) ──
     # NTN-B paga IPCA + taxa real. Com Selic alta, a taxa real sobe e o preço cai (duration).
@@ -1349,21 +1391,17 @@ with tab5:
     mtm_ima      = -duration_ima * delta_selic * 0.5
     ret_ima      = max(-20, min(30, ipca + max(3.5, taxa_real * 0.4) + mtm_ima))
 
-    # ── IDA-Geral (debêntures — crédito privado) ──
-    # NÃO é CDI puro. É uma carteira de debêntures com spread de crédito.
-    # Componentes: CDI base + spread de crédito + risco de duration (debs IPCA+)
-    # O spread se comporta de forma anticíclica: abre em recessão/stress, fecha no rali.
-    spread_base = 1.8   # spread histórico médio das debêntures IG brasileiras
-    # Spread se abre com recessão e stress financeiro
-    spread_ciclo = max(-1.0, min(2.5,
-        (-pib * 0.25)                           # recessão abre spread
-        + (max(0, selic - 14) * 0.15)           # juro muito alto = stress financeiro
-        + (max(0, fx - 6.0) * 0.3)              # câmbio descontrolado = fuga de crédito
+    # ── IDA-DI (debêntures atreladas ao CDI — crédito privado pós-fixado puro) ──
+    # Mais puro que o IDA-DI: só debêntures CDI+spread, sem IPCA+ ou prefixados.
+    # Spread de crédito varia com ciclo econômico mas duration muito baixa.
+    # Praticamente sem risco de MTM — a sensibilidade é quase toda no spread.
+    spread_di_base  = 1.5   # spread histórico médio das debs CDI+ investment grade
+    spread_di_ciclo = max(-0.8, min(2.0,
+        (-pib * 0.20)                       # recessão abre spread
+        + (max(0, selic - 14) * 0.10)       # juro alto = leve stress de crédito
+        + (max(0, fx - 6.0) * 0.20)         # câmbio alto = fuga de crédito
     ))
-    spread_total = spread_base + spread_ciclo
-    # Duration parcial das debs IPCA+ (≈30% do índice)
-    mtm_ida_geral = -2.5 * delta_selic * 0.3
-    ret_ida_geral = max(-8, min(22, cdi_sc + spread_total + mtm_ida_geral))
+    ret_ida_geral = max(-5, min(20, cdi_sc + spread_di_base + spread_di_ciclo))
 
     # ── IHFA (multimercados) ──
     # Multimercados são estratégias ativas — têm beta ao CDI + alpha direcional.
@@ -1409,12 +1447,12 @@ with tab5:
     ret_intl      = max(-30, min(50, ret_intl_brl * 100))
 
     asset_rets = {
-        "IDA Pré":   round(ret_pre,    2),
-        "IMA":       round(ret_ima,    2),
-        "IHFA":      round(ret_ihfa,   2),
-        "IDA-Geral": round(ret_ida_geral, 2),
-        "Ibovespa":  round(ret_ibov,   2),
-        "Internac.": round(ret_intl,   2),
+        "IRF-M":     round(ret_pre,       2),
+        "IMA":       round(ret_ima,       2),
+        "IHFA":      round(ret_ihfa,      2),
+        "IDA-DI":    round(ret_ida_geral, 2),
+        "Ibovespa":  round(ret_ibov,      2),
+        "Internac.": round(ret_intl,      2),
     }
 
     # ── Pesos customizados ──
@@ -2112,6 +2150,219 @@ with tab8:
         st.dataframe(df_comp, use_container_width=True)
     else:
         st.info("Configure os pesos na aba Rebalanceamento para ver a comparação com o portfólio customizado.")
+
+
+
+# ── Tab 9: Monitoramento diário ───────────────────────────────────────────────
+with tab9:
+    st.markdown("Monitoramento em frequência diária — drawdown real, retorno do período "
+                "corrente e drift dos pesos em relação ao target HRP+BL.")
+
+    if not daily_series:
+        st.warning("⚠️ Nenhuma série diária disponível. "
+                   "Faça upload dos arquivos ANBIMA ou aguarde o carregamento via Yahoo Finance.")
+        st.stop()
+
+    # ── Período disponível ────────────────────────────────────────────────────
+    all_idx = None
+    for s in daily_series.values():
+        all_idx = s.index if all_idx is None else all_idx.intersection(s.index)
+
+    if all_idx is None or len(all_idx) == 0:
+        st.warning("⚠️ Não foi possível alinhar as séries diárias.")
+        st.stop()
+
+    hoje     = all_idx[-1]
+    ini_mes  = hoje.replace(day=1)
+    ini_sem  = hoje - pd.Timedelta(days=hoje.weekday())
+    ini_ano  = hoje.replace(month=1, day=1)
+
+    st.markdown(
+        f"<div style='font-size:13px;color:#888780;margin-bottom:1rem'>"
+        f"Último dado disponível: <strong>{hoje.strftime('%d/%m/%Y')}</strong> · "
+        f"{len(all_idx)} dias úteis no histórico</div>",
+        unsafe_allow_html=True
+    )
+
+    # ── Bloco 1: Retorno do período corrente ──────────────────────────────────
+    st.markdown("<div class='section-title'>retorno do período corrente</div>",
+                unsafe_allow_html=True)
+
+    def ret_periodo(nome, ini):
+        s = daily_series.get(nome)
+        if s is None: return None
+        s = s["valor"].dropna()
+        sub = s[s.index >= ini]
+        if len(sub) < 2: return None
+        return round((sub.iloc[-1]/sub.iloc[0]-1)*100, 2)
+
+    def port_ret_periodo(ini):
+        rets = []
+        for cfg in ASSET_CFG:
+            r = ret_periodo(cfg["name"], ini)
+            if r is not None:
+                rets.append(cfg["w"] * r/100)
+        if not rets: return None
+        total = sum(WEIGHTS[cfg["name"]] for cfg in ASSET_CFG
+                    if ret_periodo(cfg["name"], ini) is not None)
+        return round(sum(rets)/total*100, 2) if total > 0 else None
+
+    periodos_mon = {
+        "Dia":  hoje - pd.Timedelta(days=1),
+        "Semana": ini_sem,
+        "Mês":  ini_mes,
+        "Ano":  ini_ano,
+    }
+
+    cols_mon = st.columns(len(periodos_mon))
+    for i, (label, ini) in enumerate(periodos_mon.items()):
+        r = port_ret_periodo(ini)
+        with cols_mon[i]:
+            cls = "pos" if r and r >= 0 else "neg"
+            st.markdown(
+                f"<div class='metric-card'>"
+                f"<div class='metric-label'>Portfólio — {label}</div>"
+                f"<div class='metric-value {cls}'>"
+                f"{f'+{r:.2f}%' if r and r>=0 else f'{r:.2f}%' if r else '—'}</div>"
+                f"<div class='metric-sub'>HRP+BL ponderado</div>"
+                f"</div>", unsafe_allow_html=True
+            )
+
+    st.divider()
+
+    # ── Bloco 2: Retorno por ativo no período ─────────────────────────────────
+    st.markdown("<div class='section-title'>retorno por ativo no período</div>",
+                unsafe_allow_html=True)
+
+    periodo_sel_d = st.selectbox("Período", list(periodos_mon.keys()),
+                                  index=2, key="mon_periodo")
+    ini_sel = periodos_mon[periodo_sel_d]
+
+    rows_d = []
+    for cfg in ASSET_CFG:
+        r = ret_periodo(cfg["name"], ini_sel)
+        rows_d.append({
+            "Ativo":   cfg["name"],
+            "Cluster": cfg["cluster"],
+            "Retorno": f"{f'+{r:.2f}%' if r and r>=0 else f'{r:.2f}%' if r else '—'}",
+            "Peso HRP+BL": f"{cfg['w']*100:.1f}%",
+        })
+    st.dataframe(pd.DataFrame(rows_d), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── Bloco 3: Drawdown diário real ─────────────────────────────────────────
+    st.markdown("<div class='section-title'>drawdown diário real</div>",
+                unsafe_allow_html=True)
+
+    # Calcular portfólio diário
+    port_d_idx = all_idx
+    port_d_ret = pd.Series(0.0, index=port_d_idx)
+    for cfg in ASSET_CFG:
+        s = daily_series.get(cfg["name"])
+        if s is None: continue
+        r = s["valor"].pct_change().reindex(port_d_idx).ffill().fillna(0)
+        port_d_ret += cfg["w"] * r
+
+    port_d_cum = (1 + port_d_ret).cumprod()
+    port_d_dd  = (port_d_cum - port_d_cum.cummax()) / port_d_cum.cummax() * 100
+
+    # Ibovespa diário drawdown
+    ibov_d = daily_series.get("Ibovespa")
+    ibov_d_dd = None
+    if ibov_d is not None:
+        ibov_d_r   = ibov_d["valor"].pct_change().reindex(port_d_idx).ffill().fillna(0)
+        ibov_d_cum = (1 + ibov_d_r).cumprod()
+        ibov_d_dd  = (ibov_d_cum - ibov_d_cum.cummax()) / ibov_d_cum.cummax() * 100
+
+    # Filtro de período
+    janelas_dd = {"3 meses":90,"6 meses":180,"12 meses":252,"3 anos":756,"Histórico":None}
+    jan_dd = st.selectbox("Janela", list(janelas_dd.keys()), index=2, key="jan_dd")
+    n_dd   = janelas_dd[jan_dd]
+    dd_plot = port_d_dd.iloc[-n_dd:] if n_dd else port_d_dd
+    labels_dd = [d.strftime("%d/%m/%Y") for d in dd_plot.index]
+
+    fig_dd_d = go.Figure()
+    fig_dd_d.add_trace(go.Scatter(
+        x=dd_plot.index, y=dd_plot.values.round(2),
+        name="HRP+BL (diário)", fill="tozeroy",
+        line=dict(color="#378ADD", width=1.5),
+        fillcolor="rgba(55,138,221,0.15)",
+        hovertemplate="%{x|%d/%m/%Y}<br>DD: %{y:.2f}%<extra>HRP+BL</extra>"
+    ))
+    if ibov_d_dd is not None:
+        ibov_dd_plot = ibov_d_dd.iloc[-n_dd:] if n_dd else ibov_d_dd
+        fig_dd_d.add_trace(go.Scatter(
+            x=ibov_dd_plot.index, y=ibov_dd_plot.values.round(2),
+            name="Ibovespa (diário)", fill="tozeroy",
+            line=dict(color="#E24B4A", width=1, dash="dot"),
+            fillcolor="rgba(226,75,74,0.08)",
+            hovertemplate="%{x|%d/%m/%Y}<br>DD: %{y:.2f}%<extra>Ibovespa</extra>"
+        ))
+
+    fig_dd_d.update_layout(
+        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+        height=300, hovermode="x unified",
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0,r=0,t=8,b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0, font=dict(color="#1a1a18")),
+        xaxis=dict(gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441", size=10), color="#1a1a18"),
+        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441", size=11), color="#1a1a18",
+                   zeroline=True, zerolinecolor="#888780"),
+    )
+    st.plotly_chart(fig_dd_d, use_container_width=True)
+
+    max_dd_d = port_d_dd.min()
+    max_dd_d_data = port_d_dd.idxmin()
+    st.caption(f"Max drawdown diário HRP+BL: **{max_dd_d:.2f}%** em "
+               f"{max_dd_d_data.strftime('%d/%m/%Y')} · "
+               f"vs mensal: {m_port['max_dd']*100:.2f}%")
+
+    st.divider()
+
+    # ── Bloco 4: Drift diário dos pesos ──────────────────────────────────────
+    st.markdown("<div class='section-title'>drift dos pesos vs target HRP+BL</div>",
+                unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:13px;color:#888780;margin-bottom:.75rem'>"
+        "Estimativa do drift atual baseado na performance relativa de cada ativo "
+        "desde o último rebalanceamento.</div>", unsafe_allow_html=True
+    )
+
+    # Calcular drift nos últimos 21 dias úteis (≈ 1 mês)
+    n_drift = min(21, len(port_d_idx)-1)
+    drift_rows = []
+    total_drift_port = 0
+    for cfg in ASSET_CFG:
+        s = daily_series.get(cfg["name"])
+        if s is None:
+            drift_rows.append({
+                "Ativo": cfg["name"], "Target": f"{cfg['w']*100:.1f}%",
+                "Estimado": "—", "Drift": "—", "Status": "—"
+            })
+            continue
+        retorno_mes = s["valor"].pct_change().reindex(port_d_idx).ffill().fillna(0)
+        ret_ativo   = (1 + retorno_mes.iloc[-n_drift:]).prod() - 1
+        ret_port    = (1 + port_d_ret.iloc[-n_drift:]).prod() - 1
+        # Peso estimado após performance relativa
+        w_novo = cfg["w"] * (1 + ret_ativo) / (1 + ret_port) if ret_port != -1 else cfg["w"]
+        drift  = (w_novo - cfg["w"]) * 100
+        banda  = 3.0  # banda padrão
+        status = "✅ OK" if abs(drift) <= banda else ("⬆️ Acima" if drift > 0 else "⬇️ Abaixo")
+        drift_rows.append({
+            "Ativo":    cfg["name"],
+            "Cluster":  cfg["cluster"],
+            "Target":   f"{cfg['w']*100:.1f}%",
+            "Estimado": f"{w_novo*100:.1f}%",
+            "Drift":    f"{drift:+.2f}%",
+            "Status":   status,
+        })
+    st.dataframe(pd.DataFrame(drift_rows), use_container_width=True, hide_index=True)
+    st.caption("Drift estimado com base nos últimos 21 dias úteis. "
+               "Para rebalanceamento preciso, use a aba Rebalanceamento com os pesos atuais reais.")
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
