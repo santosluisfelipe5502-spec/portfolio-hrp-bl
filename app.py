@@ -1089,34 +1089,102 @@ with tab1:
 
 # ── Tab 2: Drawdown ───────────────────────────────────────────────────────────
 with tab2:
+    # ── Filtro de período ──
+    periodos_dd = {
+        "12 meses": 12, "24 meses": 24, "36 meses": 36,
+        "5 anos": 60, "Histórico completo": None,
+    }
+    col_dd_per, col_dd_chk = st.columns([2, 3])
+    periodo_dd = col_dd_per.selectbox("Período", list(periodos_dd.keys()),
+                                       index=4, key="periodo_dd")
+    show_cust_dd = col_dd_chk.checkbox("Mostrar portfólio customizado",
+                                        value=True, key="show_cust_dd")
+
+    # Aplicar filtro
+    n_dd_m = periodos_dd[periodo_dd]
+    if n_dd_m:
+        corte_dd = common_idx[-1] - pd.DateOffset(months=n_dd_m)
+        idx_dd   = common_idx[common_idx >= corte_dd]
+    else:
+        idx_dd = common_idx
+
+    # Recalcular drawdown no período filtrado
+    def calc_dd_filtrado(ret_series, idx):
+        r = ret_series.reindex(idx).ffill().dropna()
+        cum = (1 + r).cumprod()
+        dd  = (cum - cum.cummax()) / cum.cummax() * 100
+        return dd
+
+    dd_port_f = calc_dd_filtrado(port_ret, idx_dd)
+    dd_ibov_f = calc_dd_filtrado(ibov_ret, idx_dd)
+
+    # Drawdown do customizado
+    custom_w_dd = {cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}",
+                   cfg["w"]*100)/100 for cfg in ASSET_CFG}
+    total_dd = sum(custom_w_dd.values())
+    custom_valid_dd = abs(total_dd - 1.0) < 0.02
+    if custom_valid_dd:
+        c_ret_dd = sum(
+            custom_w_dd[a["name"]] * series[a["name"]]["valor"]
+            .pct_change().dropna().reindex(common_idx).ffill()
+            for a in ASSET_CFG
+        )
+        dd_cust_f = calc_dd_filtrado(c_ret_dd, idx_dd)
+
+    # ── Gráfico ──
     fig_dd = go.Figure()
     fig_dd.add_trace(go.Scatter(
-        x=m_port["dd"].index, y=(m_port["dd"]*100).round(2),
+        x=dd_port_f.index, y=dd_port_f.values.round(2),
         name="HRP+BL", fill="tozeroy",
         line=dict(color="#378ADD", width=1.5),
-        fillcolor="rgba(55,138,221,0.15)"))
+        fillcolor="rgba(55,138,221,0.15)",
+        hovertemplate="%{x|%b/%Y}<br>DD: %{y:.2f}%<extra>HRP+BL</extra>"))
     fig_dd.add_trace(go.Scatter(
-        x=m_ibov["dd"].index, y=(m_ibov["dd"]*100).round(2),
+        x=dd_ibov_f.index, y=dd_ibov_f.values.round(2),
         name="Ibovespa", fill="tozeroy",
         line=dict(color="#E24B4A", width=1.2, dash="dot"),
-        fillcolor="rgba(226,75,74,0.08)"))
+        fillcolor="rgba(226,75,74,0.08)",
+        hovertemplate="%{x|%b/%Y}<br>DD: %{y:.2f}%<extra>Ibovespa</extra>"))
+    if show_cust_dd and custom_valid_dd:
+        fig_dd.add_trace(go.Scatter(
+            x=dd_cust_f.index, y=dd_cust_f.values.round(2),
+            name="Customizado", fill="tozeroy",
+            line=dict(color="#E24B4A", width=1.5, dash="dashdot"),
+            fillcolor="rgba(226,75,74,0.05)",
+            hovertemplate="%{x|%b/%Y}<br>DD: %{y:.2f}%<extra>Customizado</extra>"))
+    elif show_cust_dd and not custom_valid_dd:
+        st.caption("⚠️ Configure os pesos na aba Rebalanceamento para ver o drawdown customizado.")
+
     fig_dd.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
         font=dict(color="#1a1a18"),
         margin=dict(l=0,r=0,t=8,b=0),
-        legend=dict(font=dict(color="#1a1a18"), bgcolor="rgba(0,0,0,0)"),
-        xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
-        yaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"), 
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0, font=dict(color="#1a1a18")),
+        xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11),
+                   color="#1a1a18", range=[idx_dd[0], idx_dd[-1]]),
+        yaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11),
+                   color="#1a1a18", ticksuffix="%"),
         height=320,
     )
     st.plotly_chart(fig_dd, use_container_width=True)
 
-    dd_max_port = m_port["dd"].min() * 100
-    dd_max_ibov = m_ibov["dd"].min() * 100
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Max DD — HRP+BL",  f"{dd_max_port:.2f}%")
-    c2.metric("Max DD — Ibovespa",f"{dd_max_ibov:.2f}%",  delta=f"{dd_max_port-dd_max_ibov:.1f}%")
-    c3.metric("Redução de risco",  f"{(dd_max_port-dd_max_ibov):.1f}%", delta="proteção HRP+BL")
+    # ── Métricas comparativas ──
+    dd_max_port = dd_port_f.min()
+    dd_max_ibov = dd_ibov_f.min()
+    n_cols = 4 if (show_cust_dd and custom_valid_dd) else 3
+    cols_dd = st.columns(n_cols)
+    cols_dd[0].metric("Max DD — HRP+BL",   f"{dd_max_port:.2f}%")
+    cols_dd[1].metric("Max DD — Ibovespa", f"{dd_max_ibov:.2f}%",
+                       delta=f"{dd_max_port-dd_max_ibov:.1f}%")
+    cols_dd[2].metric("Proteção HRP+BL",   f"{dd_max_port-dd_max_ibov:.1f}%",
+                       delta="vs Ibovespa")
+    if show_cust_dd and custom_valid_dd:
+        dd_max_cust = dd_cust_f.min()
+        diff_cust = dd_max_cust - dd_max_port
+        cols_dd[3].metric("Max DD — Customizado", f"{dd_max_cust:.2f}%",
+                           delta=f"{diff_cust:+.1f}% vs HRP+BL")
 
 # ── Tab 3: Métricas ───────────────────────────────────────────────────────────
 with tab3:
