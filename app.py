@@ -1735,7 +1735,7 @@ with tab5:
                               for a in ASSET_CFG]
         fig_contrib.add_trace(go.Bar(
             x=nomes_at, y=[round(v,3) for v in contrib_hrp_vals],
-            name="Contribuição HRP+BL", marker_color="#378ADDcc"))
+            name="Contribuição HRP+BL", marker_color="rgba(55,138,221,0.8)"))
         fig_contrib.add_trace(go.Bar(
             x=nomes_at, y=[round(v,3) for v in contrib_cust_vals],
             name="Contribuição Customizado", marker_color="rgba(226,75,74,0.7)"))
