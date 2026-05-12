@@ -859,6 +859,12 @@ TAIL_EVENTS = [
      "desc": "Pacote de gastos sem cobertura, colapso do real, abertura brutal da curva.", "tipo": "Doméstico"},
     {"name": "Tarifas Trump",           "start": "2025-03-31", "end": "2025-04-30", "color": "#7F77DD",
      "desc": "Guerra comercial global, crash do SPY, fuga de risco generalizada.", "tipo": "Global"},
+    {"name": "Joesley Day",             "start": "2017-04-30", "end": "2017-05-31", "color": "#C4770A",
+     "desc": "Delação JBS/Joesley Batista — maior queda diária do Ibovespa em anos (−8%). Crise política aguda.", "tipo": "Doméstico"},
+    {"name": "Invasão Irã-EUA",         "start": "2026-02-28", "end": "2026-03-31", "color": "#854F0B",
+     "desc": "Escalada militar entre Irã e EUA, pressão sobre commodities e ativos de risco globais.", "tipo": "Global"},
+    {"name": "Bloqueio Ormuz",          "start": "2026-04-13", "end": "2026-04-30", "color": "#E24B4A",
+     "desc": "Bloqueio do Estreito de Ormuz, choque de petróleo e fuga de risco global.", "tipo": "Global"},
 ]
 
 
@@ -1676,6 +1682,79 @@ with tab5:
             st.info(f"📊 Portfólio customizado supera o HRP+BL em **{diff_cust:+.2f}%** a.a. neste cenário.")
         else:
             st.info(f"📊 Portfólio customizado fica **{diff_cust:.2f}%** abaixo do HRP+BL neste cenário.")
+
+    # ── Tabela comparativa detalhada HRP+BL vs Customizado no cenário ──────────
+    if custom_valid_sc and custom_ret_sc is not None:
+        st.divider()
+        st.markdown("<div class='section-title'>comparativo detalhado por ativo — HRP+BL vs customizado</div>",
+                    unsafe_allow_html=True)
+        st.caption("Para cada ativo: retorno esperado no cenário × peso em cada carteira × contribuição ao retorno total.")
+
+        comp_rows = []
+        for a in ASSET_CFG:
+            nome = a["name"]
+            ret_a = asset_rets.get(nome, 0)
+            w_hrp = WEIGHTS.get(nome, 0)
+            w_cust = custom_w_sc.get(nome, 0)
+            contrib_hrp  = w_hrp  * ret_a
+            contrib_cust = w_cust * ret_a
+            comp_rows.append({
+                "Ativo":             nome,
+                "Cluster":           a["cluster"],
+                "Retorno esperado":  f"{ret_a:.2f}%",
+                "Peso HRP+BL":       f"{w_hrp*100:.1f}%",
+                "Contrib. HRP+BL":   f"{contrib_hrp:.2f}%",
+                "Peso Customizado":  f"{w_cust*100:.1f}%",
+                "Contrib. Custom.":  f"{contrib_cust:.2f}%",
+                "Δ Contribuição":    f"{contrib_cust-contrib_hrp:+.2f}%",
+            })
+        df_comp_sc = pd.DataFrame(comp_rows)
+
+        # Linha de total
+        total_row = {
+            "Ativo": "TOTAL",
+            "Cluster": "—",
+            "Retorno esperado": "—",
+            "Peso HRP+BL":     "100.0%",
+            "Contrib. HRP+BL": f"{port_ret_sc:.2f}%",
+            "Peso Customizado":"100.0%",
+            "Contrib. Custom.":f"{custom_ret_sc:.2f}%",
+            "Δ Contribuição":  f"{custom_ret_sc-port_ret_sc:+.2f}%",
+        }
+        df_comp_sc = pd.concat([df_comp_sc,
+                                 pd.DataFrame([total_row])],
+                                ignore_index=True)
+        st.dataframe(df_comp_sc, use_container_width=True, hide_index=True)
+
+        # Gráfico de contribuição comparativa
+        fig_contrib = go.Figure()
+        nomes_at = [r["Ativo"] for r in comp_rows]
+        contrib_hrp_vals  = [WEIGHTS.get(a["name"],0)*asset_rets.get(a["name"],0)
+                              for a in ASSET_CFG]
+        contrib_cust_vals = [custom_w_sc.get(a["name"],0)*asset_rets.get(a["name"],0)
+                              for a in ASSET_CFG]
+        fig_contrib.add_trace(go.Bar(
+            x=nomes_at, y=[round(v,3) for v in contrib_hrp_vals],
+            name="Contribuição HRP+BL", marker_color="#378ADDcc"))
+        fig_contrib.add_trace(go.Bar(
+            x=nomes_at, y=[round(v,3) for v in contrib_cust_vals],
+            name="Contribuição Customizado", marker_color="rgba(226,75,74,0.7)"))
+        fig_contrib.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+            height=260, barmode="group",
+            font=dict(color="#1a1a18"),
+            margin=dict(l=0,r=0,t=8,b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="left", x=0, font=dict(color="#1a1a18")),
+            xaxis=dict(gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+            yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441", size=11), color="#1a1a18",
+                       title="Contribuição ao retorno (%)"),
+        )
+        st.plotly_chart(fig_contrib, use_container_width=True)
+        st.caption("Contribuição = peso × retorno esperado do ativo no cenário. "
+                   "Diferenças mostram onde os pesos customizados apostam diferente do HRP+BL.")
 
 
 # ── Tab 6: Eventos de cauda ───────────────────────────────────────────────────
