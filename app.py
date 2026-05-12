@@ -974,15 +974,20 @@ with tab1:
             name="IPCA", line=dict(color="#C4770A", width=1.5, dash="longdashdot")))
 
     # ── Marcações de eventos de cauda ──
+    # Filtrar apenas eventos dentro do período selecionado
+    data_ini = idx_filtrado[0]  if len(idx_filtrado) > 0 else port_cum.index[0]
+    data_fim = idx_filtrado[-1] if len(idx_filtrado) > 0 else port_cum.index[-1]
+
     show_events = st.checkbox("Marcar eventos de cauda no gráfico", value=True, key="ev_acum")
     if show_events:
         for ev in TAIL_EVENTS:
             try:
                 ev_start = pd.Timestamp(ev["start"])
                 ev_end   = pd.Timestamp(ev["end"])
-                if ev_start < port_cum.index[-1] and ev_start >= port_cum.index[0]:
+                # Só mostrar se o evento está dentro do período selecionado
+                if ev_start >= data_ini and ev_start <= data_fim:
                     fig.add_vrect(
-                        x0=ev_start, x1=ev_end,
+                        x0=ev_start, x1=min(ev_end, data_fim),
                         fillcolor=ev["color"], opacity=0.12,
                         layer="below", line_width=0,
                     )
@@ -1002,6 +1007,8 @@ with tab1:
         height=420, hovermode="x unified",
         font=dict(color="#1a1a18"),
         margin=dict(l=0,r=40,t=8,b=0),
+        # ── Limitar eixo X ao período selecionado ──
+        xaxis_range=[data_ini, data_fim],
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color="#1a1a18")),
         yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
                    tickfont=dict(color="#444441", size=11), color="#1a1a18",
@@ -1012,22 +1019,32 @@ with tab1:
 
     # ── Nota sobre portfólio customizado ──
     if show_custom and custom_valid:
-        acum_custom = (custom_cum.iloc[-1] / 100 - 1) * 100
-        acum_hrpbl  = (port_cum.iloc[-1]   / 100 - 1) * 100
+        # Acumulado no período selecionado
+        port_f_vals   = port_f if len(port_f) > 0 else port_cum
+        custom_f_vals = custom_f if custom_f is not None and len(custom_f) > 0 else custom_cum
+        acum_custom = custom_f_vals.iloc[-1] if len(custom_f_vals) > 0 else 0
+        acum_hrpbl  = port_f_vals.iloc[-1]   if len(port_f_vals) > 0 else 0
         diff = acum_custom - acum_hrpbl
         if diff >= 0:
             st.success(f"📊 Com os pesos customizados, o retorno acumulado seria **+{acum_custom:.1f}%** — {diff:+.1f}% vs HRP+BL original ({acum_hrpbl:.1f}%)")
         else:
             st.info(f"📊 Com os pesos customizados, o retorno acumulado seria **+{acum_custom:.1f}%** — {diff:+.1f}% vs HRP+BL original ({acum_hrpbl:.1f}%)")
 
-    # ── Gráfico retorno anual ──
+    # ── Gráfico retorno anual — filtrado pelo período selecionado ──
     st.markdown("<div class='section-title'>Retorno anual</div>", unsafe_allow_html=True)
-    ann_port   = port_cum.resample("YE").last().pct_change().dropna() * 100
-    ann_cdi    = cdi_cum.resample("YE").last().pct_change().dropna() * 100
-    ann_ibov   = ibov_cum.resample("YE").last().pct_change().dropna() * 100
-    ann_igual  = eq_cum.resample("YE").last().pct_change().dropna() * 100
+    # Usar série filtrada para retorno anual
+    port_cum_f  = port_cum[port_cum.index >= data_ini]
+    cdi_cum_f   = cdi_cum[cdi_cum.index   >= data_ini]
+    ibov_cum_f  = ibov_cum[ibov_cum.index >= data_ini]
+    eq_cum_f    = eq_cum[eq_cum.index     >= data_ini]
+    ipca6_cum_f = ipca6_cum[ipca6_cum.index >= data_ini]
+
+    ann_port   = port_cum_f.resample("YE").last().pct_change().dropna() * 100
+    ann_cdi    = cdi_cum_f.resample("YE").last().pct_change().dropna() * 100
+    ann_ibov   = ibov_cum_f.resample("YE").last().pct_change().dropna() * 100
+    ann_igual  = eq_cum_f.resample("YE").last().pct_change().dropna() * 100
     ann_custom = custom_cum.resample("YE").last().pct_change().dropna() * 100
-    ann_ipca6  = ipca6_cum.resample("YE").last().pct_change().dropna() * 100
+    ann_ipca6  = ipca6_cum_f.resample("YE").last().pct_change().dropna() * 100
     years = sorted(set(ann_port.index.year) & set(ann_cdi.index.year) & set(ann_ibov.index.year))
 
     def get_ann(series_ann, yr):
