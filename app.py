@@ -1512,12 +1512,12 @@ with tab5:
     )
 
     presets = {
-        "Base (Selic 14.5%)": dict(selic=14.50, ipca=5.5, pib=2.0, fx=5.8),
+        "Base (Selic 14.5%)": dict(selic=14.50, ipca=5.5, pib=2.0, fx=4.99),
         "Juro terminal 2026": dict(selic=13.75, ipca=4.5, pib=2.5, fx=5.5),
         "Juro alto":          dict(selic=16.5,  ipca=6.5, pib=0.5, fx=6.2),
         "Recessão":           dict(selic=10.0,  ipca=3.0, pib=-2.0,fx=6.5),
         "Rali de risco":      dict(selic=11.0,  ipca=4.0, pib=3.5, fx=4.8),
-        "Customizado":        dict(selic=14.50, ipca=5.5, pib=2.0, fx=5.8),
+        "Customizado":        dict(selic=14.50, ipca=5.5, pib=2.0, fx=4.99),
     }
     preset = st.selectbox("Cenário pré-definido", list(presets.keys()))
     p = presets[preset]
@@ -1561,12 +1561,12 @@ with tab5:
             )
 
         # 2. Câmbio alto puxa inflação (pass-through histórico BR ≈ 0.10-0.15)
-        delta_fx_base = fx_adj - 5.1
+        delta_fx_base = fx_adj - 4.99  # base = PTAX mai/2026
         if abs(delta_fx_base) > 0.3:
             passthrough = 0.12
             ipca_adj = min(20.0, ipca + delta_fx_base * passthrough * 10)
             ajustes.append(
-                f"💱 Pass-through cambial ({fx_adj:.2f} vs base 5.10): "
+                f"💱 Pass-through cambial ({fx_adj:.2f} vs base 4.99): "
                 f"IPCA ajustado +{delta_fx_base*passthrough*10:.2f}% → {ipca_adj:.2f}%"
             )
 
@@ -1678,7 +1678,7 @@ with tab5:
     premio_risco  = 5.5
     sens_pib      = pib * 2.8                          # elasticidade earnings-PIB
     custo_capital = max(0, (selic - 10) * 1.2)        # juro alto comprime múltiplos
-    efeit_cambio  = (fx - 5.1) * 1.5                  # câmbio: exportadoras ganham
+    efeit_cambio  = (fx - 4.99) * 1.5                 # câmbio vs PTAX atual 4.99
     ret_ibov      = max(-40, min(50,
         cdi_sc + premio_risco + sens_pib - custo_capital + efeit_cambio
     ))
@@ -1691,7 +1691,7 @@ with tab5:
     ret_tlt_usd  = max(-20, min(20, 4.5 - max(0, (selic-10)*0.8)))
     ret_intl_usd = 0.40 * ret_spy_usd + 0.60 * ret_tlt_usd
     # Efeito cambial em BRL
-    delta_fx     = (fx - 5.1) / 5.1 * 100   # variação % do câmbio vs base
+    delta_fx     = (fx - 4.99) / 4.99 * 100  # variação % do câmbio vs PTAX atual 4.99
     ret_intl_brl = (1 + ret_intl_usd/100) * (1 + delta_fx/100) - 1
     ret_intl      = max(-30, min(50, ret_intl_brl * 100))
 
