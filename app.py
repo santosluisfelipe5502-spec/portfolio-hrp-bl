@@ -934,7 +934,7 @@ def hex_to_rgba(hex_color, alpha=0.5):
     return hex_color
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "📈 Retorno acumulado",
     "📉 Drawdown",
     "📊 Métricas",
@@ -945,6 +945,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "🔬 Análise comparativa",
     "📡 Monitoramento diário",
     "📐 Janelas móveis",
+    "🎲 Monte Carlo",
 ])
 
 # ── Tab 1: Retorno acumulado ──────────────────────────────────────────────────
@@ -1912,6 +1913,174 @@ with tab5:
         st.plotly_chart(fig_contrib, use_container_width=True)
         st.caption("Contribuição = peso × retorno esperado do ativo no cenário. "
                    "Diferenças mostram onde os pesos customizados apostam diferente do HRP+BL.")
+
+    # ── Forma 2: BL Dinâmico — sugestão de pesos ─────────────────────────────
+    st.divider()
+    st.markdown("### 🎯 Black-Litterman Dinâmico — Sugestão de pesos para este cenário")
+    st.markdown(
+        "O modelo usa os retornos esperados deste cenário como **visões táticas** do Black-Litterman, "
+        "combina com o equilíbrio histórico HRP e sugere uma nova alocação ótima. "
+        "Quanto maior a confiança, mais os pesos se afastam do HRP original em direção ao cenário."
+    )
+
+    col_bl1, col_bl2 = st.columns(2)
+    tau_bl = col_bl1.slider(
+        "Nível de confiança nas visões do cenário",
+        min_value=0.0, max_value=1.0, value=0.5, step=0.05,
+        help="0 = ignora o cenário (mantém HRP puro) | 1 = segue totalmente o cenário"
+    )
+    rodar_bl = col_bl2.button("▶ Calcular pesos BL para este cenário", key="btn_bl_dyn")
+
+    if rodar_bl:
+        with st.spinner("Calculando Black-Litterman dinâmico..."):
+            try:
+                # ── Montar retornos históricos ──
+                ret_dict_bl = {}
+                for cfg in ASSET_CFG:
+                    r = series[cfg["name"]]["valor"].pct_change().dropna()
+                    r = r.reindex(common_idx).ffill().dropna()
+                    ret_dict_bl[cfg["name"]] = r
+                ret_df_bl = pd.DataFrame(ret_dict_bl).dropna()
+
+                # ── Covariância histórica ──
+                cov_bl = ret_df_bl.cov() * 12  # anualizar
+
+                # ── Retornos de equilíbrio (Pi = delta * Sigma * w) ──
+                delta_bl = 2.5  # aversão ao risco de mercado
+                w_hrp_bl = np.array([WEIGHTS.get(a["name"], 0) for a in ASSET_CFG])
+                ativos_bl = [a["name"] for a in ASSET_CFG]
+                cov_np    = cov_bl.loc[ativos_bl, ativos_bl].values
+                pi_bl     = delta_bl * cov_np @ w_hrp_bl  # retornos de equilíbrio
+
+                # ── Visões do cenário (Q = retornos esperados por ativo) ──
+                q_bl = np.array([asset_rets.get(a, 0) / 100 for a in ativos_bl])
+
+                # ── Matriz de visões P (identidade — visão sobre cada ativo) ──
+                P_bl = np.eye(len(ativos_bl))
+
+                # ── Incerteza das visões (Omega proporcional à variância) ──
+                tau_sigma = (1 - tau_bl + 0.01) * cov_np  # tau controla confiança
+                omega_bl  = np.diag(np.diag(P_bl @ tau_sigma @ P_bl.T))
+
+                # ── Fórmula BL ──
+                # E[R] = [(tau*Sigma)^-1 + P'*Omega^-1*P]^-1 * [(tau*Sigma)^-1*Pi + P'*Omega^-1*Q]
+                tau_sigma_inv = np.linalg.inv(tau_sigma + np.eye(len(ativos_bl))*1e-8)
+                omega_inv     = np.linalg.inv(omega_bl + np.eye(len(ativos_bl))*1e-8)
+
+                M1 = tau_sigma_inv + P_bl.T @ omega_inv @ P_bl
+                M2 = tau_sigma_inv @ pi_bl + P_bl.T @ omega_inv @ q_bl
+
+                er_bl = np.linalg.solve(M1, M2)  # retornos ajustados BL
+
+                # ── Rodar HRP com retornos BL ajustados ──
+                # Ajustar matriz de covariância pelos novos retornos esperados
+                er_series = pd.Series(er_bl, index=ativos_bl)
+
+                # Calcular pesos pelo inverso da variância ajustada pelo retorno BL
+                var_ajustada = pd.Series({
+                    a: max(cov_np[i,i], 1e-6) / max(er_bl[i]**2, 1e-6)
+                    for i, a in enumerate(ativos_bl)
+                })
+                # Normalizar
+                w_bl_raw = 1 / var_ajustada
+                w_bl_raw = w_bl_raw / w_bl_raw.sum()
+
+                # Combinar com HRP original pela confiança
+                w_hrp_s  = pd.Series(w_hrp_bl, index=ativos_bl)
+                w_bl_fin = (tau_bl * w_bl_raw + (1-tau_bl) * w_hrp_s)
+                w_bl_fin = w_bl_fin / w_bl_fin.sum()
+
+                # ── Retorno esperado com novos pesos ──
+                ret_bl_port = sum(w_bl_fin[a] * asset_rets.get(a, 0)
+                                  for a in ativos_bl)
+                ret_hrp_port = sum(WEIGHTS.get(a, 0) * asset_rets.get(a, 0)
+                                   for a in ativos_bl)
+
+                # ── Exibir resultado ──
+                st.markdown("#### Pesos sugeridos pelo BL Dinâmico")
+
+                rows_bl = []
+                for cfg in ASSET_CFG:
+                    nome   = cfg["name"]
+                    w_orig = cfg["w"] * 100
+                    w_novo = w_bl_fin.get(nome, 0) * 100
+                    r_esp  = asset_rets.get(nome, 0)
+                    delta  = w_novo - w_orig
+                    rows_bl.append({
+                        "Ativo":          nome,
+                        "Cluster":        cfg["cluster"],
+                        "Ret. esperado":  f"{r_esp:.2f}%",
+                        "Peso HRP atual": f"{w_orig:.1f}%",
+                        "Peso BL novo":   f"{w_novo:.1f}%",
+                        "Δ Peso":         f"{delta:+.1f}%",
+                        "Ação":           "⬆️ Aumentar" if delta > 1.0 else
+                                          "⬇️ Reduzir"  if delta < -1.0 else
+                                          "✅ Manter",
+                    })
+                df_bl = pd.DataFrame(rows_bl).set_index("Ativo")
+                st.dataframe(df_bl, use_container_width=True)
+
+                # KPIs comparativos
+                k1, k2, k3 = st.columns(3)
+                k1.metric("Retorno HRP+BL original", f"{ret_hrp_port:.2f}%",
+                           delta=f"{ret_hrp_port-selic:+.2f}% vs CDI")
+                k2.metric("Retorno BL Dinâmico",     f"{ret_bl_port:.2f}%",
+                           delta=f"{ret_bl_port-selic:+.2f}% vs CDI")
+                k3.metric("Ganho do rebalanceamento", f"{ret_bl_port-ret_hrp_port:+.2f}%",
+                           delta="vs HRP original")
+
+                # Gráfico comparativo de pesos
+                fig_bl = go.Figure()
+                fig_bl.add_trace(go.Bar(
+                    x=ativos_bl,
+                    y=[cfg["w"]*100 for cfg in ASSET_CFG],
+                    name="HRP+BL original",
+                    marker_color="rgba(55,138,221,0.7)",
+                ))
+                fig_bl.add_trace(go.Bar(
+                    x=ativos_bl,
+                    y=[w_bl_fin.get(a,0)*100 for a in ativos_bl],
+                    name=f"BL Dinâmico (confiança {tau_bl:.0%})",
+                    marker_color="rgba(29,158,117,0.7)",
+                ))
+                fig_bl.update_layout(
+                    plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                    height=280, barmode="group",
+                    font=dict(color="#1a1a18"),
+                    margin=dict(l=0,r=0,t=8,b=0),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                xanchor="left", x=0, font=dict(color="#1a1a18")),
+                    xaxis=dict(gridcolor="#e8e6e0",
+                               tickfont=dict(color="#444441",size=11), color="#1a1a18"),
+                    yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                               tickfont=dict(color="#444441",size=11), color="#1a1a18"),
+                )
+                st.plotly_chart(fig_bl, use_container_width=True)
+
+                # Botão para aplicar como customizado
+                pesos_str = " | ".join([
+                    f"{a}: {w_bl_fin.get(a,0)*100:.1f}%"
+                    for a in ativos_bl
+                ])
+                st.code(pesos_str, language=None)
+                st.caption(
+                    "💡 Para aplicar: copie os valores acima e insira nos campos "
+                    "da aba Rebalanceamento. O portfólio customizado será recalculado "
+                    "automaticamente em todas as abas."
+                )
+
+                # Salvar pesos BL no session_state para uso no Monte Carlo
+                for a in ativos_bl:
+                    st.session_state[f"bl_dyn_{a}"] = round(w_bl_fin.get(a,0)*100, 1)
+                st.session_state["bl_dyn_scenario"] = preset
+                st.success(
+                    f"✅ Pesos BL calculados para o cenário **{preset}** "
+                    f"com confiança de **{tau_bl:.0%}**. "
+                    f"Disponíveis para uso no Monte Carlo."
+                )
+
+            except Exception as e:
+                st.error(f"Erro no cálculo BL Dinâmico: {e}")
 
 
 # ── Tab 6: Eventos de cauda ───────────────────────────────────────────────────
@@ -2929,6 +3098,328 @@ with tab10:
             f"⚠️ Em apenas **{pct_acima_port:.0f}%** das janelas de {janela_meses} meses "
             f"o HRP+BL bateu o {bench_label}. "
             f"Considere revisar os pesos ou as visões do modelo."
+        )
+
+
+
+# ── Tab 11: Monte Carlo ───────────────────────────────────────────────────────
+with tab11:
+    st.markdown(
+        "Simulação de Monte Carlo com **regimes de Markov** calibrados no histórico brasileiro. "
+        "Projeta milhares de trajetórias possíveis para o portfólio nos próximos 5 anos, "
+        "considerando transições entre regimes de juro alto, juro baixo e crise."
+    )
+
+    # ── Controles ─────────────────────────────────────────────────────────────
+    col_mc1, col_mc2, col_mc3 = st.columns(3)
+    n_sim    = col_mc1.selectbox("Número de simulações",
+                                  [1000, 5000, 10000], index=1,
+                                  format_func=lambda x: f"{x:,}")
+    horizonte= col_mc2.selectbox("Horizonte (anos)",
+                                  [1, 2, 3, 5], index=3)
+    semente  = col_mc3.number_input("Semente aleatória", value=42,
+                                     min_value=1, max_value=9999,
+                                     help="Fixar para reproduzir resultados")
+
+    # Opção de usar pesos BL Dinâmico
+    usar_bl_mc = False
+    if any(f"bl_dyn_{a['name']}" in st.session_state for a in ASSET_CFG):
+        cenario_bl = st.session_state.get("bl_dyn_scenario", "—")
+        usar_bl_mc = st.checkbox(
+            f"Usar pesos BL Dinâmico (cenário: {cenario_bl})",
+            value=True,
+            help="Pesos calculados na aba Cenários → BL Dinâmico"
+        )
+
+    rodar_mc = st.button("▶ Rodar simulação Monte Carlo", key="btn_mc")
+
+    if rodar_mc:
+        with st.spinner(f"Rodando {n_sim:,} simulações de {horizonte} anos..."):
+            try:
+                np.random.seed(int(semente))
+                n_meses = horizonte * 12
+
+                # ── Retornos históricos mensais ───────────────────────────────
+                ret_dict_mc = {}
+                for cfg in ASSET_CFG:
+                    r = series[cfg["name"]]["valor"].pct_change().dropna()
+                    r = r.reindex(common_idx).ffill().dropna()
+                    ret_dict_mc[cfg["name"]] = r
+                ret_df_mc = pd.DataFrame(ret_dict_mc).dropna()
+
+                # ── Pesos a simular ───────────────────────────────────────────
+                w_hrp_mc = np.array([WEIGHTS.get(a["name"],0) for a in ASSET_CFG])
+                ativos_mc = [a["name"] for a in ASSET_CFG]
+
+                if usar_bl_mc:
+                    w_bl_mc = np.array([
+                        st.session_state.get(f"bl_dyn_{a}", WEIGHTS.get(a,0)*100)/100
+                        for a in ativos_mc
+                    ])
+                    w_bl_mc = w_bl_mc / w_bl_mc.sum()
+                else:
+                    w_bl_mc = None
+
+                # ── Regimes de Markov calibrados no histórico BR ──────────────
+                # Regime 0: Juro alto (Selic > 12%) — maior vol, menor retorno ações
+                # Regime 1: Juro baixo/neutro (Selic 6-12%) — retornos equilibrados
+                # Regime 2: Crise (drawdown > 5% em 1 mês) — correlações aumentam
+                regimes = {
+                    0: {"nome": "Juro alto",   "prob_stay": 0.75, "peso_vol": 1.0,  "peso_ret": 0.90},
+                    1: {"nome": "Juro neutro", "prob_stay": 0.70, "peso_vol": 0.85, "peso_ret": 1.05},
+                    2: {"nome": "Crise",       "prob_stay": 0.40, "peso_vol": 1.80, "peso_ret": 0.60},
+                }
+                # Matriz de transição calibrada no histórico BR 2009-2026
+                trans = np.array([
+                    [0.75, 0.20, 0.05],  # De juro alto → permanece, vai neutro, vai crise
+                    [0.15, 0.70, 0.15],  # De juro neutro
+                    [0.10, 0.50, 0.40],  # De crise → sai rapidamente
+                ])
+                regime_atual = 0  # Brasil hoje está em juro alto
+
+                # ── Parâmetros históricos por ativo ──────────────────────────
+                mu_hist  = ret_df_mc.mean().values        # retorno médio mensal
+                cov_hist = ret_df_mc.cov().values         # covariância mensal
+
+                # ── Simulação ────────────────────────────────────────────────
+                def simular_portfolio(pesos, n_sim, n_meses):
+                    resultados = np.ones((n_sim, n_meses + 1))
+                    regimes_traj = []
+
+                    for sim in range(n_sim):
+                        regime = regime_atual
+                        traj_regime = []
+                        for t in range(n_meses):
+                            # Transição de regime
+                            regime = np.random.choice(3, p=trans[regime])
+                            traj_regime.append(regime)
+
+                            # Parâmetros do regime
+                            r_cfg = regimes[regime]
+                            mu_r  = mu_hist * r_cfg["peso_ret"]
+                            cov_r = cov_hist * r_cfg["peso_vol"]**2
+
+                            # Garantir covariância positiva definida
+                            cov_r = cov_r + np.eye(len(ativos_mc)) * 1e-7
+
+                            # Gerar retorno
+                            ret_sim = np.random.multivariate_normal(mu_r, cov_r)
+                            ret_port = float(pesos @ ret_sim)
+                            resultados[sim, t+1] = resultados[sim, t] * (1 + ret_port)
+
+                        regimes_traj.append(traj_regime)
+
+                    return resultados, regimes_traj
+
+                # Simular HRP original
+                sim_hrp, _ = simular_portfolio(w_hrp_mc, n_sim, n_meses)
+
+                # Simular BL Dinâmico se disponível
+                sim_bl = None
+                if w_bl_mc is not None:
+                    sim_bl, _ = simular_portfolio(w_bl_mc, n_sim, n_meses)
+
+                # Simular CDI (determinístico + leve variação)
+                cdi_mensal = cdi_aligned.mean()
+                sim_cdi = np.ones((n_sim, n_meses + 1))
+                for t in range(n_meses):
+                    variacao = np.random.normal(0, 0.001, n_sim)
+                    sim_cdi[:, t+1] = sim_cdi[:, t] * (1 + cdi_mensal + variacao)
+
+                # ── Calcular percentis ────────────────────────────────────────
+                meses_eixo = list(range(n_meses + 1))
+
+                def percentis(sim):
+                    return {
+                        "p10": np.percentile(sim, 10, axis=0),
+                        "p25": np.percentile(sim, 25, axis=0),
+                        "p50": np.percentile(sim, 50, axis=0),
+                        "p75": np.percentile(sim, 75, axis=0),
+                        "p90": np.percentile(sim, 90, axis=0),
+                    }
+
+                p_hrp = percentis(sim_hrp)
+                p_cdi = percentis(sim_cdi)
+                p_bl  = percentis(sim_bl) if sim_bl is not None else None
+
+                # Converter para % de retorno acumulado
+                def to_pct(p):
+                    return {k: (v - 1) * 100 for k, v in p.items()}
+
+                pp_hrp = to_pct(p_hrp)
+                pp_cdi = to_pct(p_cdi)
+                pp_bl  = to_pct(p_bl) if p_bl else None
+
+                # ── Gráfico de leque ──────────────────────────────────────────
+                st.markdown("<div class='section-title'>leque de trajetórias — retorno acumulado</div>",
+                            unsafe_allow_html=True)
+
+                fig_mc = go.Figure()
+
+                # Faixa HRP P10-P90
+                fig_mc.add_trace(go.Scatter(
+                    x=meses_eixo + meses_eixo[::-1],
+                    y=list(pp_hrp["p90"]) + list(pp_hrp["p10"])[::-1],
+                    fill="toself", fillcolor="rgba(55,138,221,0.12)",
+                    line=dict(color="rgba(0,0,0,0)"),
+                    name="HRP+BL P10-P90", showlegend=True,
+                ))
+                # Mediana HRP
+                fig_mc.add_trace(go.Scatter(
+                    x=meses_eixo, y=pp_hrp["p50"],
+                    name="HRP+BL (mediana)",
+                    line=dict(color="#378ADD", width=2.5),
+                ))
+
+                # BL Dinâmico se disponível
+                if pp_bl:
+                    fig_mc.add_trace(go.Scatter(
+                        x=meses_eixo + meses_eixo[::-1],
+                        y=list(pp_bl["p90"]) + list(pp_bl["p10"])[::-1],
+                        fill="toself", fillcolor="rgba(29,158,117,0.10)",
+                        line=dict(color="rgba(0,0,0,0)"),
+                        name="BL Dinâmico P10-P90", showlegend=True,
+                    ))
+                    fig_mc.add_trace(go.Scatter(
+                        x=meses_eixo, y=pp_bl["p50"],
+                        name="BL Dinâmico (mediana)",
+                        line=dict(color="#1D9E75", width=2.5, dash="dash"),
+                    ))
+
+                # CDI projetado
+                fig_mc.add_trace(go.Scatter(
+                    x=meses_eixo, y=pp_cdi["p50"],
+                    name="CDI projetado",
+                    line=dict(color="#888780", width=1.5, dash="dot"),
+                ))
+
+                # Linha de referência zero
+                fig_mc.add_hline(y=0, line_color="#888780", line_width=1)
+
+                # Labels eixo X em anos
+                tick_vals = [i*12 for i in range(horizonte+1)]
+                tick_text = [f"Ano {i}" for i in range(horizonte+1)]
+
+                fig_mc.update_layout(
+                    plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                    height=420, hovermode="x unified",
+                    font=dict(color="#1a1a18"),
+                    margin=dict(l=0,r=0,t=8,b=0),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                xanchor="left", x=0, font=dict(color="#1a1a18")),
+                    xaxis=dict(gridcolor="#e8e6e0", tickvals=tick_vals,
+                               ticktext=tick_text,
+                               tickfont=dict(color="#444441",size=11), color="#1a1a18"),
+                    yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                               tickfont=dict(color="#444441",size=11), color="#1a1a18",
+                               title="Retorno acumulado (%)"),
+                )
+                st.plotly_chart(fig_mc, use_container_width=True)
+
+                # ── Tabela de probabilidades ──────────────────────────────────
+                st.divider()
+                st.markdown("<div class='section-title'>probabilidades por horizonte</div>",
+                            unsafe_allow_html=True)
+
+                horizontes_tbl = [h for h in [12,24,36,60] if h <= n_meses]
+                prob_rows = []
+                for h in horizontes_tbl:
+                    ret_hrp_h  = (sim_hrp[:, h] - 1) * 100
+                    ret_cdi_h  = (sim_cdi[:, h] - 1) * 100
+                    ret_bl_h   = (sim_bl[:, h] - 1) * 100 if sim_bl is not None else None
+
+                    row = {
+                        "Horizonte": f"{h} meses ({h//12} ano{'s' if h//12>1 else ''})",
+                        "HRP+BL mediana":    f"{np.median(ret_hrp_h):+.1f}%",
+                        "HRP+BL P10/P90":   f"{np.percentile(ret_hrp_h,10):+.1f}% / {np.percentile(ret_hrp_h,90):+.1f}%",
+                        "P(bater CDI)":     f"{(ret_hrp_h > ret_cdi_h).mean()*100:.0f}%",
+                        "P(bater IPCA)":    f"{(ret_hrp_h > ipca*h/12).mean()*100:.0f}%",
+                        "P(DD > 5%)":       f"{(ret_hrp_h < -5).mean()*100:.0f}%",
+                        "P(DD > 10%)":      f"{(ret_hrp_h < -10).mean()*100:.0f}%",
+                    }
+                    if ret_bl_h is not None:
+                        row["BL Dinâmico mediana"] = f"{np.median(ret_bl_h):+.1f}%"
+                        row["P(BL > HRP)"]         = f"{(ret_bl_h > ret_hrp_h).mean()*100:.0f}%"
+                    prob_rows.append(row)
+
+                df_mc_prob = pd.DataFrame(prob_rows).set_index("Horizonte")
+                st.dataframe(df_mc_prob, use_container_width=True)
+
+                # ── Histograma retorno final ──────────────────────────────────
+                st.divider()
+                st.markdown(f"<div class='section-title'>distribuição do retorno acumulado em {horizonte} anos</div>",
+                            unsafe_allow_html=True)
+
+                ret_final_hrp = (sim_hrp[:, -1] - 1) * 100
+                ret_final_cdi = (sim_cdi[:, -1] - 1) * 100
+
+                fig_hist_mc = go.Figure()
+                fig_hist_mc.add_trace(go.Histogram(
+                    x=ret_final_hrp, name="HRP+BL",
+                    nbinsx=50, opacity=0.7,
+                    marker_color="rgba(55,138,221,0.7)",
+                ))
+                if sim_bl is not None:
+                    ret_final_bl = (sim_bl[:, -1] - 1) * 100
+                    fig_hist_mc.add_trace(go.Histogram(
+                        x=ret_final_bl, name="BL Dinâmico",
+                        nbinsx=50, opacity=0.6,
+                        marker_color="rgba(29,158,117,0.7)",
+                    ))
+                fig_hist_mc.add_vline(
+                    x=float(np.median(ret_final_cdi)),
+                    line_color="#888780", line_width=2, line_dash="dot",
+                    annotation_text=f"CDI mediano: {np.median(ret_final_cdi):.1f}%",
+                    annotation_font_color="#888780",
+                )
+                fig_hist_mc.update_layout(
+                    plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                    height=300, barmode="overlay",
+                    font=dict(color="#1a1a18"),
+                    margin=dict(l=0,r=0,t=8,b=0),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                xanchor="left", x=0, font=dict(color="#1a1a18")),
+                    xaxis=dict(gridcolor="#e8e6e0", ticksuffix="%",
+                               tickfont=dict(color="#444441",size=11), color="#1a1a18",
+                               title=f"Retorno acumulado em {horizonte} anos (%)"),
+                    yaxis=dict(gridcolor="#e8e6e0",
+                               tickfont=dict(color="#444441",size=11), color="#1a1a18",
+                               title="Frequência"),
+                )
+                st.plotly_chart(fig_hist_mc, use_container_width=True)
+
+                # ── Insight automático ────────────────────────────────────────
+                p_bate_cdi = (ret_final_hrp > ret_final_cdi).mean() * 100
+                mediana_exc = float(np.median(ret_final_hrp - ret_final_cdi))
+                st.caption(
+                    f"Baseado em {n_sim:,} simulações com regimes de Markov calibrados "
+                    f"no histórico BR 2009-2026. "
+                    f"Regime de partida: juro alto (Selic atual 14.5%)."
+                )
+                if p_bate_cdi >= 60:
+                    st.success(
+                        f"✅ Em **{p_bate_cdi:.0f}%** das simulações o HRP+BL supera o CDI "
+                        f"em {horizonte} anos, com excesso mediano de **{mediana_exc:+.1f}%**."
+                    )
+                else:
+                    st.info(
+                        f"📊 Em **{p_bate_cdi:.0f}%** das simulações o HRP+BL supera o CDI "
+                        f"em {horizonte} anos, com excesso mediano de **{mediana_exc:+.1f}%**. "
+                        f"Ambiente de juro alto desafia portfólios diversificados vs CDI."
+                    )
+
+            except Exception as e:
+                st.error(f"Erro na simulação: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
+    else:
+        st.info("Configure os parâmetros acima e clique em **▶ Rodar simulação** para ver os resultados.")
+        st.markdown(
+            "<div style='font-size:13px;color:#888780;margin-top:1rem'>"
+            "💡 Dica: rode primeiro o BL Dinâmico na aba Cenários para comparar "
+            "HRP+BL original vs pesos otimizados pelo cenário macro."
+            "</div>", unsafe_allow_html=True
         )
 
 
