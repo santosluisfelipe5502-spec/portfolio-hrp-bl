@@ -1546,50 +1546,42 @@ with tab5:
     if use_correlacoes:
         ajustes = []
 
-        # 1. Recessão puxa câmbio para cima e força corte de juros
+        # NOTA: A Selic inserida pelo usuário é sempre mantida como âncora.
+        # As correlações ajustam apenas IPCA, câmbio e PIB — variáveis consequentes.
+        # Isso evita que o modelo sobrescreva o input do usuário com estimativas do Copom.
+
+        # 1. Recessão puxa câmbio para cima (Selic NÃO é ajustada — usuário é a âncora)
         if pib < 0:
-            delta_fx_recessao   = abs(pib) * 0.25
-            delta_selic_recessao = abs(pib) * 0.40
-            fx_adj    = min(12.0, fx + delta_fx_recessao)
-            selic_adj = max(4.0,  selic - delta_selic_recessao)
+            delta_fx_recessao = abs(pib) * 0.30
+            fx_adj = min(12.0, fx + delta_fx_recessao)
             ajustes.append(
                 f"📉 Recessão (PIB {pib:.1f}%): "
-                f"câmbio ajustado +{delta_fx_recessao:.2f} → {fx_adj:.2f} | "
-                f"Selic ajustada -{delta_selic_recessao:.2f}% → {selic_adj:.2f}%"
+                f"câmbio ajustado +{delta_fx_recessao:.2f} → {fx_adj:.2f}"
             )
 
         # 2. Câmbio alto puxa inflação (pass-through histórico BR ≈ 0.10-0.15)
-        delta_fx_base  = fx_adj - 5.1
+        delta_fx_base = fx_adj - 5.1
         if abs(delta_fx_base) > 0.3:
-            passthrough    = 0.12
+            passthrough = 0.12
             ipca_adj = min(20.0, ipca + delta_fx_base * passthrough * 10)
             ajustes.append(
                 f"💱 Pass-through cambial ({fx_adj:.2f} vs base 5.10): "
                 f"IPCA ajustado +{delta_fx_base*passthrough*10:.2f}% → {ipca_adj:.2f}%"
             )
 
-        # 3. IPCA alto acima da meta força alta da Selic (regra de Taylor simplificada)
-        meta_inflacao = 3.0
-        if ipca_adj > meta_inflacao + 1.5:
-            reacao_copom = (ipca_adj - meta_inflacao - 1.5) * 0.8
-            selic_adj    = min(25.0, selic_adj + reacao_copom)
-            ajustes.append(
-                f"🏦 Reação Copom (IPCA {ipca_adj:.1f}% > meta+1.5%): "
-                f"Selic ajustada +{reacao_copom:.2f}% → {selic_adj:.2f}%"
-            )
-
-        # 4. Juro muito alto deprime PIB (lag de 2-4 trimestres, simplificado)
-        if selic_adj > 14.0:
-            depressao_pib = (selic_adj - 14.0) * 0.15
+        # 3. Juro alto (inserido pelo usuário) deprime PIB
+        # Selic é âncora — usamos o valor original do usuário aqui
+        if selic > 13.0:
+            depressao_pib = (selic - 13.0) * 0.12
             pib_adj = max(-6.0, pib_adj - depressao_pib)
             ajustes.append(
-                f"📊 Juro alto ({selic_adj:.1f}%): PIB ajustado "
+                f"📊 Juro alto ({selic:.1f}%): PIB ajustado "
                 f"-{depressao_pib:.2f}% → {pib_adj:.2f}%"
             )
 
-        # 5. Rali de risco — câmbio cai, PIB sobe
+        # 4. Rali de risco — câmbio cai quando PIB alto e juro baixo
         if pib > 3.0 and selic < 11.0:
-            fx_adj    = max(4.0, fx_adj - (pib - 3.0) * 0.15)
+            fx_adj = max(4.0, fx_adj - (pib - 3.0) * 0.15)
             ajustes.append(
                 f"🚀 Rali de risco (PIB {pib:.1f}%, Selic {selic:.1f}%): "
                 f"câmbio ajustado → {fx_adj:.2f}"
@@ -1608,8 +1600,9 @@ with tab5:
                 col = "#0F6E56" if d < 0 else "#854F0B"
                 return (f"<span style='font-size:10px;color:{col};margin-left:4px'>"
                         f"ajustado: {adj:.2f}{unit}</span>")
-            ca1.markdown(f"Selic efetiva: <strong>{selic_adj:.2f}%</strong>"
-                         f"{delta_badge(selic, selic_adj, '%')}", unsafe_allow_html=True)
+            ca1.markdown(f"Selic: <strong>{selic:.2f}%</strong>"
+                         f"<span style='font-size:10px;color:#888780;margin-left:4px'>"
+                         f"âncora do usuário</span>", unsafe_allow_html=True)
             ca2.markdown(f"IPCA efetivo: <strong>{ipca_adj:.2f}%</strong>"
                          f"{delta_badge(ipca, ipca_adj, '%')}", unsafe_allow_html=True)
             ca3.markdown(f"PIB efetivo: <strong>{pib_adj:.2f}%</strong>"
@@ -1618,7 +1611,9 @@ with tab5:
                          f"{delta_badge(fx, fx_adj)}", unsafe_allow_html=True)
 
     # Usar variáveis ajustadas nas fórmulas
-    selic, ipca, pib, fx = selic_adj, ipca_adj, pib_adj, fx_adj
+    # Selic mantida como inserida pelo usuário (âncora)
+    # Apenas IPCA, PIB e câmbio recebem ajustes das correlações
+    selic, ipca, pib, fx = selic, ipca_adj, pib_adj, fx_adj
 
     # ── Retornos esperados por ativo ──────────────────────────────────────────
     # Todas as fórmulas são estimativas baseadas em relações históricas.
