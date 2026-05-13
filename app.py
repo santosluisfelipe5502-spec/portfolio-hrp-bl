@@ -1348,9 +1348,6 @@ with tab5:
         unsafe_allow_html=True
     )
 
-    preset = st.selectbox("Cenário pré-definido", [
-        "Base", "Juro alto", "Recessão", "Rali de risco", "Customizado"
-    ])
     presets = {
         "Base (Selic 14.5%)": dict(selic=14.50, ipca=5.5, pib=2.0, fx=5.8),
         "Juro terminal 2026": dict(selic=13.75, ipca=4.5, pib=2.5, fx=5.5),
@@ -1359,6 +1356,7 @@ with tab5:
         "Rali de risco":      dict(selic=11.0,  ipca=4.0, pib=3.5, fx=4.8),
         "Customizado":        dict(selic=14.50, ipca=5.5, pib=2.0, fx=5.8),
     }
+    preset = st.selectbox("Cenário pré-definido", list(presets.keys()))
     p = presets[preset]
 
     # ── Inputs numéricos ──
