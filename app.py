@@ -877,7 +877,7 @@ def hex_to_rgba(hex_color, alpha=0.5):
     return hex_color
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "📈 Retorno acumulado",
     "📉 Drawdown",
     "📊 Métricas",
@@ -887,6 +887,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📦 Ativos individuais",
     "🔬 Análise comparativa",
     "📡 Monitoramento diário",
+    "📐 Janelas móveis",
 ])
 
 # ── Tab 1: Retorno acumulado ──────────────────────────────────────────────────
@@ -1351,11 +1352,12 @@ with tab5:
         "Base", "Juro alto", "Recessão", "Rali de risco", "Customizado"
     ])
     presets = {
-        "Base":           dict(selic=13.75, ipca=4.5, pib=2.0, fx=5.1),
-        "Juro alto":      dict(selic=16.5,  ipca=6.5, pib=0.5, fx=5.6),
-        "Recessão":       dict(selic=10.0,  ipca=3.0, pib=-2.0,fx=6.2),
-        "Rali de risco":  dict(selic=11.0,  ipca=4.0, pib=3.5, fx=4.8),
-        "Customizado":    dict(selic=13.75, ipca=4.5, pib=2.0, fx=5.1),
+        "Base (Selic 14.5%)": dict(selic=14.50, ipca=5.5, pib=2.0, fx=5.8),
+        "Juro terminal 2026": dict(selic=13.75, ipca=4.5, pib=2.5, fx=5.5),
+        "Juro alto":          dict(selic=16.5,  ipca=6.5, pib=0.5, fx=6.2),
+        "Recessão":           dict(selic=10.0,  ipca=3.0, pib=-2.0,fx=6.5),
+        "Rali de risco":      dict(selic=11.0,  ipca=4.0, pib=3.5, fx=4.8),
+        "Customizado":        dict(selic=14.50, ipca=5.5, pib=2.0, fx=5.8),
     }
     p = presets[preset]
 
@@ -1470,7 +1472,7 @@ with tab5:
     # Mais representativo do mercado real de renda fixa prefixada.
     # Em alta de juros, preço cai pelo MTM, mas duration menor = menos sensível.
     duration_irfm = 2.5
-    delta_selic   = selic - 13.75   # variação vs cenário base
+    delta_selic   = selic - 14.50   # variação vs cenário base (Selic atual 14.5%)
     mtm_irfm      = -duration_irfm * delta_selic * 0.6
     ret_pre       = max(-12, min(22, selic * 0.84 + mtm_irfm))
 
@@ -2527,6 +2529,252 @@ with tab9:
     st.dataframe(pd.DataFrame(drift_rows), use_container_width=True, hide_index=True)
     st.caption("Drift estimado com base nos últimos 21 dias úteis. "
                "Para rebalanceamento preciso, use a aba Rebalanceamento com os pesos atuais reais.")
+
+
+
+# ── Tab 10: Janelas móveis ────────────────────────────────────────────────────
+with tab10:
+    st.markdown(
+        "Análise de consistência do portfólio em janelas móveis de 36 e 48 meses. "
+        "Responde a pergunta: **em qualquer momento que eu tivesse entrado, "
+        "qual a chance de ter batido o CDI e o IPCA?**"
+    )
+
+    # ── Controles ──────────────────────────────────────────────────────────────
+    col_jm1, col_jm2, col_jm3 = st.columns(3)
+    janela_meses = col_jm1.selectbox(
+        "Janela de análise", [24, 36, 48, 60],
+        index=1, format_func=lambda x: f"{x} meses ({x//12} anos)",
+        key="janela_movel"
+    )
+    show_cust_jm = col_jm2.checkbox("Incluir portfólio customizado", value=True, key="jm_cust")
+    benchmark_jm = col_jm3.selectbox("Benchmark principal", ["CDI", "IPCA"], key="jm_bench")
+
+    # ── Calcular retornos em janelas móveis ────────────────────────────────────
+    # Portfólio customizado
+    custom_w_jm = {cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}",
+                   cfg["w"]*100)/100 for cfg in ASSET_CFG}
+    total_jm = sum(custom_w_jm.values())
+    custom_valid_jm = abs(total_jm - 1.0) < 0.02
+    if custom_valid_jm:
+        c_ret_jm = sum(
+            custom_w_jm[a["name"]] * series[a["name"]]["valor"]
+            .pct_change().dropna().reindex(common_idx).ffill()
+            for a in ASSET_CFG
+        )
+
+    # 1/N igual
+    eq_ret_jm = sum((1/6) * series[a["name"]]["valor"]
+                    .pct_change().dropna().reindex(common_idx).ffill()
+                    for a in ASSET_CFG)
+
+    def rolling_acum(ret_series, n):
+        """Retorno acumulado de cada janela de n meses."""
+        cum = (1 + ret_series).cumprod()
+        result = {}
+        for i in range(n, len(cum)):
+            end_date   = cum.index[i]
+            start_date = cum.index[i - n]
+            acum = (cum.iloc[i] / cum.iloc[i - n] - 1) * 100
+            result[end_date] = round(acum, 2)
+        return pd.Series(result)
+
+    roll_port  = rolling_acum(port_ret,    janela_meses)
+    roll_cdi   = rolling_acum(cdi_aligned, janela_meses)
+    roll_ibov  = rolling_acum(ibov_ret,    janela_meses)
+    roll_ipca  = rolling_acum(ipca6_ret,   janela_meses)
+    roll_igual = rolling_acum(eq_ret_jm,   janela_meses)
+    roll_cust  = rolling_acum(c_ret_jm, janela_meses) if custom_valid_jm else None
+
+    bench_series = roll_cdi if benchmark_jm == "CDI" else roll_ipca
+    bench_label  = "CDI" if benchmark_jm == "CDI" else "IPCA"
+
+    # ── Bloco 1: KPIs de consistência ─────────────────────────────────────────
+    st.markdown("<div class='section-title'>consistência vs benchmark</div>",
+                unsafe_allow_html=True)
+
+    def kpi_consistencia(roll, bench, nome, cor):
+        idx_comum = roll.index.intersection(bench.index)
+        r = roll.reindex(idx_comum)
+        b = bench.reindex(idx_comum)
+        n_total   = len(r)
+        n_acima   = (r > b).sum()
+        pct_acima = n_acima / n_total * 100 if n_total > 0 else 0
+        melhor    = r.max()
+        pior      = r.min()
+        mediana   = r.median()
+        return {
+            "nome": nome, "cor": cor,
+            "n_total": n_total, "n_acima": n_acima,
+            "pct_acima": pct_acima,
+            "melhor": melhor, "pior": pior, "mediana": mediana,
+        }
+
+    portfolios_jm = [
+        (roll_port,  port_ret,  "HRP+BL",   "#378ADD"),
+        (roll_igual, eq_ret_jm, "1/N igual", "#7F77DD"),
+        (roll_ibov,  ibov_ret,  "Ibovespa",  "#BA7517"),
+    ]
+    if custom_valid_jm and roll_cust is not None and show_cust_jm:
+        portfolios_jm.insert(1, (roll_cust, c_ret_jm, "Customizado", "#E24B4A"))
+
+    stats_list = []
+    for roll, _, nome, cor in portfolios_jm:
+        stats_list.append(kpi_consistencia(roll, bench_series, nome, cor))
+
+    cols_jm = st.columns(len(stats_list))
+    for i, s in enumerate(stats_list):
+        cls = "pos" if s["pct_acima"] >= 70 else "warn" if s["pct_acima"] >= 50 else "neg"
+        with cols_jm[i]:
+            st.markdown(
+                f"<div class='metric-card' style='border-top:3px solid {s["cor"]}'>"
+                f"<div class='metric-label'>{s["nome"]} vs {bench_label}</div>"
+                f"<div class='metric-value {cls}'>{s["pct_acima"]:.0f}%</div>"
+                f"<div class='metric-sub'>das janelas acima do {bench_label} "
+                f"({s["n_acima"]}/{s["n_total"]})</div>"
+                f"<div style='margin-top:8px;font-size:12px;color:#888780'>"
+                f"Mediana: {s['mediana']:+.1f}% | "
+                f"Melhor: {s['melhor']:+.1f}% | "
+                f"Pior: {s['pior']:+.1f}%</div>"
+                f"</div>", unsafe_allow_html=True
+            )
+
+    st.divider()
+
+    # ── Bloco 2: Gráfico de retorno por janela ────────────────────────────────
+    st.markdown("<div class='section-title'>retorno acumulado por janela móvel</div>",
+                unsafe_allow_html=True)
+    st.caption(f"Cada ponto = retorno acumulado dos {janela_meses} meses anteriores. "
+               f"Acima da linha = bateu o {bench_label} naquela janela.")
+
+    fig_jm = go.Figure()
+
+    # Área do benchmark
+    fig_jm.add_trace(go.Scatter(
+        x=bench_series.index, y=bench_series.values,
+        name=bench_label, fill="tozeroy",
+        line=dict(color="#1D9E75" if benchmark_jm=="CDI" else "#C4770A",
+                  width=1.5, dash="dot"),
+        fillcolor="rgba(29,158,117,0.08)" if benchmark_jm=="CDI"
+                  else "rgba(196,119,10,0.08)",
+    ))
+
+    cores_jm = {"HRP+BL":"#378ADD","Customizado":"#E24B4A",
+                "1/N igual":"#7F77DD","Ibovespa":"#BA7517"}
+    for roll, _, nome, cor in portfolios_jm:
+        idx_c = roll.index.intersection(bench_series.index)
+        fig_jm.add_trace(go.Scatter(
+            x=roll.reindex(idx_c).index,
+            y=roll.reindex(idx_c).values,
+            name=nome, line=dict(color=cor, width=2),
+            hovertemplate=f"<b>{nome}</b><br>%{{x|%b/%Y}}<br>"
+                          f"Acum {janela_meses}m: %{{y:.1f}}%<extra></extra>",
+        ))
+
+    fig_jm.update_layout(
+        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+        height=380, hovermode="x unified",
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0,r=0,t=8,b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0, font=dict(color="#1a1a18")),
+        xaxis=dict(gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441",size=11), color="#1a1a18"),
+        yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441",size=11), color="#1a1a18",
+                   zeroline=True, zerolinecolor="#888780",
+                   title=f"Retorno acumulado {janela_meses} meses (%)"),
+    )
+    st.plotly_chart(fig_jm, use_container_width=True)
+
+    st.divider()
+
+    # ── Bloco 3: Tabela estatística completa ──────────────────────────────────
+    st.markdown("<div class='section-title'>estatísticas por portfólio</div>",
+                unsafe_allow_html=True)
+
+    tbl_rows = []
+    for roll, ret_s, nome, cor in portfolios_jm:
+        idx_c = roll.index.intersection(bench_series.index)
+        r = roll.reindex(idx_c)
+        b = bench_series.reindex(idx_c)
+        n = len(r)
+        tbl_rows.append({
+            "Portfólio":           nome,
+            f"% janelas > {bench_label}": f"{(r>b).mean()*100:.0f}%",
+            "Mediana acum.":       f"{r.median():+.1f}%",
+            "Melhor janela":       f"{r.max():+.1f}%",
+            "Pior janela":         f"{r.min():+.1f}%",
+            "Janelas positivas":   f"{(r>0).mean()*100:.0f}%",
+            f"Excesso vs {bench_label}": f"{(r-b).median():+.1f}%",
+            "Total janelas":       str(n),
+        })
+
+    df_jm = pd.DataFrame(tbl_rows).set_index("Portfólio")
+    st.dataframe(df_jm, use_container_width=True)
+
+    st.divider()
+
+    # ── Bloco 4: Histograma do excesso de retorno vs benchmark ───────────────
+    st.markdown("<div class='section-title'>distribuição do excesso de retorno vs benchmark</div>",
+                unsafe_allow_html=True)
+    st.caption(f"Distribuição do retorno do HRP+BL menos o {bench_label} "
+               f"em cada janela de {janela_meses} meses. "
+               f"Barras à direita do zero = janelas em que bateu o benchmark.")
+
+    fig_hist_jm = go.Figure()
+    for roll, _, nome, cor in portfolios_jm:
+        idx_c = roll.index.intersection(bench_series.index)
+        excesso = (roll.reindex(idx_c) - bench_series.reindex(idx_c)).dropna()
+        fig_hist_jm.add_trace(go.Histogram(
+            x=excesso.values, name=nome,
+            nbinsx=30, opacity=0.65,
+            marker_color=cor,
+            hovertemplate=f"<b>{nome}</b><br>Excesso: %{{x:.1f}}%<br>"
+                          f"Freq: %{{y}}<extra></extra>",
+        ))
+    fig_hist_jm.add_vline(x=0, line_color="#888780", line_width=2,
+                           annotation_text="Zero", annotation_font_color="#888780")
+    fig_hist_jm.update_layout(
+        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+        height=280, barmode="overlay",
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0,r=0,t=8,b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0, font=dict(color="#1a1a18")),
+        xaxis=dict(gridcolor="#e8e6e0", ticksuffix="%",
+                   tickfont=dict(color="#444441",size=11), color="#1a1a18",
+                   title=f"Excesso de retorno vs {bench_label} (%)"),
+        yaxis=dict(gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441",size=11), color="#1a1a18",
+                   title="Frequência"),
+    )
+    st.plotly_chart(fig_hist_jm, use_container_width=True)
+
+    # Insight automático
+    idx_c = roll_port.index.intersection(bench_series.index)
+    excesso_port = (roll_port.reindex(idx_c) - bench_series.reindex(idx_c)).dropna()
+    pct_acima_port = (excesso_port > 0).mean() * 100
+    mediana_excesso = excesso_port.median()
+
+    if pct_acima_port >= 70:
+        st.success(
+            f"✅ Em **{pct_acima_port:.0f}%** das janelas de {janela_meses} meses "
+            f"o HRP+BL bateu o {bench_label}, com excesso mediano de "
+            f"**{mediana_excesso:+.1f}%** no período."
+        )
+    elif pct_acima_port >= 50:
+        st.info(
+            f"📊 Em **{pct_acima_port:.0f}%** das janelas de {janela_meses} meses "
+            f"o HRP+BL bateu o {bench_label}, com excesso mediano de "
+            f"**{mediana_excesso:+.1f}%** no período."
+        )
+    else:
+        st.warning(
+            f"⚠️ Em apenas **{pct_acima_port:.0f}%** das janelas de {janela_meses} meses "
+            f"o HRP+BL bateu o {bench_label}. "
+            f"Considere revisar os pesos ou as visões do modelo."
+        )
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
