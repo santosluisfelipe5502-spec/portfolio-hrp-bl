@@ -7,6 +7,8 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from datetime import datetime, date
 import io, warnings
+from scipy.cluster.hierarchy import linkage, leaves_list
+from scipy.spatial.distance import squareform
 
 # ── Layout padrão Plotly (não usado diretamente — inline em cada gráfico) ──
 _UNUSED = dict(
@@ -123,6 +125,61 @@ ASSET_CFG = [
     {"name": "Internac.",  "key": "INTL",       "color": "#7F77DD", "cluster": "Equity",     "w": 0.083, "vol": 0.184},
 ]
 WEIGHTS = {a["name"]: a["w"] for a in ASSET_CFG}
+
+# ── Algoritmo HRP (López de Prado, 2016) ─────────────────────────────────────
+def compute_hrp(returns_df):
+    """Calcula pesos HRP dado um DataFrame de retornos mensais.
+    Etapas: correlação → distância → clusterização → quasi-diag → alocação recursiva.
+    """
+    # Remover colunas com NaN excessivo
+    returns_df = returns_df.dropna(axis=1, thresh=int(len(returns_df)*0.7))
+    returns_df = returns_df.fillna(0)
+
+    cov  = returns_df.cov()
+    corr = returns_df.corr()
+
+    # Etapa 1: Matriz de distância
+    dist = np.sqrt((1 - corr) / 2)
+    np.fill_diagonal(dist.values, 0)
+    dist_sq = squareform(dist.values)
+
+    # Etapa 2: Clusterização hierárquica
+    link = linkage(dist_sq, method="single")
+    ordem = leaves_list(link)
+    ativos_ord = [corr.columns[i] for i in ordem]
+
+    # Etapa 3: Quasi-diagonalização — reordenar covariância
+    cov_ord = cov.loc[ativos_ord, ativos_ord]
+
+    # Etapa 4: Alocação recursiva pelo inverso da variância
+    def get_cluster_var(cov_m, items):
+        sub = cov_m.loc[items, items]
+        ivp = 1 / np.diag(sub.values)
+        ivp /= ivp.sum()
+        return float(ivp @ sub.values @ ivp)
+
+    def hrp_alloc(cov_m, items):
+        weights = pd.Series(1.0, index=items)
+        clusters = [items]
+        while clusters:
+            clusters = [c for c in clusters if len(c) > 1]
+            if not clusters:
+                break
+            new_clusters = []
+            for cluster in clusters:
+                mid = len(cluster) // 2
+                c1, c2 = cluster[:mid], cluster[mid:]
+                var1 = get_cluster_var(cov_m, c1)
+                var2 = get_cluster_var(cov_m, c2)
+                alpha = 1 - var1 / (var1 + var2)
+                weights[c1] *= alpha
+                weights[c2] *= 1 - alpha
+                new_clusters += [c1, c2]
+            clusters = new_clusters
+        return weights / weights.sum()
+
+    w = hrp_alloc(cov_ord, ativos_ord)
+    return w.reindex([a["name"] for a in ASSET_CFG]).fillna(0)
 COLORS  = {a["name"]: a["color"] for a in ASSET_CFG}
 
 # ── Funções utilitárias ──────────────────────────────────────────────────────
@@ -1245,6 +1302,111 @@ with tab3:
 # ── Tab 4: Rebalanceamento ────────────────────────────────────────────────────
 with tab4:
     st.markdown("Insira os pesos atuais da carteira e veja o drift em relação ao target HRP+BL.")
+
+    # ── Seção de recálculo semestral ──────────────────────────────────────────
+    with st.expander("🔄 Recalcular pesos HRP com dados recentes", expanded=False):
+        st.markdown(
+            "Roda o algoritmo HRP (López de Prado, 2016) com os últimos **N meses** "
+            "de retornos reais dos ativos e sugere novos pesos. "
+            "Use semestralmente para manter o modelo atualizado."
+        )
+        col_hrp1, col_hrp2 = st.columns(2)
+        janela_hrp = col_hrp1.selectbox(
+            "Janela histórica", [24, 36, 48, 60],
+            index=1,
+            format_func=lambda x: f"{x} meses ({x//12} anos)",
+            key="janela_hrp"
+        )
+        rodar_hrp = col_hrp2.button("▶ Calcular novos pesos HRP", key="btn_hrp")
+
+        if rodar_hrp:
+            with st.spinner(f"Calculando HRP com os últimos {janela_hrp} meses..."):
+                try:
+                    # Montar DataFrame de retornos dos últimos N meses
+                    idx_hrp = common_idx[-janela_hrp:]
+                    ret_dict = {}
+                    for cfg in ASSET_CFG:
+                        r = series[cfg["name"]]["valor"].pct_change().dropna()
+                        r = r.reindex(idx_hrp).ffill().dropna()
+                        if len(r) >= janela_hrp * 0.7:
+                            ret_dict[cfg["name"]] = r
+                    ret_df = pd.DataFrame(ret_dict).dropna()
+
+                    if len(ret_df.columns) < 3:
+                        st.warning("⚠️ Dados insuficientes para recalcular. Verifique as séries carregadas.")
+                    else:
+                        novos_pesos = compute_hrp(ret_df)
+
+                        # Comparativo visual
+                        st.markdown("#### Novos pesos sugeridos vs pesos atuais")
+                        rows_hrp = []
+                        for cfg in ASSET_CFG:
+                            nome    = cfg["name"]
+                            w_atual = cfg["w"] * 100
+                            w_novo  = novos_pesos.get(nome, 0) * 100
+                            delta   = w_novo - w_atual
+                            rows_hrp.append({
+                                "Ativo":        nome,
+                                "Cluster":      cfg["cluster"],
+                                "Peso atual":   f"{w_atual:.1f}%",
+                                "Novo peso HRP":f"{w_novo:.1f}%",
+                                "Δ":            f"{delta:+.1f}%",
+                                "Ação":         "⬆️ Aumentar" if delta > 1 else
+                                                "⬇️ Reduzir"  if delta < -1 else
+                                                "✅ Manter",
+                            })
+                        df_hrp = pd.DataFrame(rows_hrp).set_index("Ativo")
+                        st.dataframe(df_hrp, use_container_width=True)
+
+                        # Gráfico comparativo
+                        fig_hrp = go.Figure()
+                        nomes_hrp = [cfg["name"] for cfg in ASSET_CFG]
+                        fig_hrp.add_trace(go.Bar(
+                            x=nomes_hrp,
+                            y=[cfg["w"]*100 for cfg in ASSET_CFG],
+                            name="Pesos atuais",
+                            marker_color="rgba(55,138,221,0.7)",
+                        ))
+                        fig_hrp.add_trace(go.Bar(
+                            x=nomes_hrp,
+                            y=[novos_pesos.get(n,0)*100 for n in nomes_hrp],
+                            name=f"Novos pesos HRP ({janela_hrp}m)",
+                            marker_color="rgba(29,158,117,0.7)",
+                        ))
+                        fig_hrp.update_layout(
+                            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                            height=280, barmode="group",
+                            font=dict(color="#1a1a18"),
+                            margin=dict(l=0,r=0,t=8,b=0),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                        xanchor="left", x=0,
+                                        font=dict(color="#1a1a18")),
+                            xaxis=dict(gridcolor="#e8e6e0",
+                                       tickfont=dict(color="#444441",size=11),
+                                       color="#1a1a18"),
+                            yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                                       tickfont=dict(color="#444441",size=11),
+                                       color="#1a1a18"),
+                        )
+                        st.plotly_chart(fig_hrp, use_container_width=True)
+
+                        st.info(
+                            f"💡 Para aplicar os novos pesos: ajuste os campos abaixo "
+                            f"com os valores da coluna 'Novo peso HRP' e atualize o código "
+                            f"com os novos pesos em ASSET_CFG semestralmente."
+                        )
+
+                        # Mostrar pesos prontos para copiar
+                        pesos_str = " | ".join([
+                            f"{cfg['name']} {novos_pesos.get(cfg['name'],0)*100:.1f}%"
+                            for cfg in ASSET_CFG
+                        ])
+                        st.code(pesos_str, language=None)
+
+                except Exception as e:
+                    st.error(f"Erro no cálculo HRP: {e}")
+
+    st.divider()
 
     st.markdown(
         "<div style='font-size:12px;color:#888780;margin-bottom:.75rem'>"
