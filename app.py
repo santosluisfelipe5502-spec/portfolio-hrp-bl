@@ -942,7 +942,8 @@ def hex_to_rgba(hex_color, alpha=0.5):
     return hex_color
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+    "📖 Guia",
     "📈 Retorno acumulado",
     "📉 Drawdown",
     "📊 Métricas",
@@ -955,6 +956,212 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "📐 Janelas móveis",
     "🎲 Monte Carlo",
 ])
+
+# ── Tab 0: Guia ──────────────────────────────────────────────────────────────
+with tab0:
+    st.markdown("""
+    <div style='max-width:900px'>
+    <h2 style='font-size:22px;font-weight:500;color:#1a1a18;margin-bottom:4px'>
+        Guia do Dashboard HRP + Black-Litterman
+    </h2>
+    <p style='color:#888780;font-size:13px;margin-bottom:2rem'>
+        Referência rápida sobre o modelo, os índices, as métricas e como usar cada aba.
+    </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Seção 1: O Modelo ─────────────────────────────────────────────────────
+    with st.expander("🧠 O modelo — HRP + Black-Litterman", expanded=True):
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            st.markdown("""
+**Hierarchical Risk Parity (HRP)**
+_López de Prado, 2016_
+
+Distribui o risco do portfólio de forma hierárquica — primeiro entre grupos de ativos
+similares (clusters), depois dentro de cada grupo. Diferente do Risk Parity clássico,
+o HRP nunca inverte a matriz de covariância, tornando os pesos mais estáveis e robustos.
+
+**Como funciona na prática:**
+- Calcula as correlações entre todos os ativos
+- Agrupa os similares (ex: IRF-M e IMA ficam juntos por serem renda fixa)
+- Distribui o risco proporcionalmente ao inverso da variância de cada grupo
+- Resultado: portfólio diversificado sem concentrações indesejadas
+            """)
+        with col_m2:
+            st.markdown("""
+**Black-Litterman (BL)**
+_Black & Litterman, 1992_
+
+Combina o equilíbrio histórico do mercado com visões táticas do investidor usando
+estatística Bayesiana. O resultado é um vetor de retornos esperados que incorpora
+tanto o que os dados históricos dizem quanto o que você acredita que vai acontecer.
+
+**Como funciona na prática:**
+- Parte dos retornos de equilíbrio (pesos HRP × covariância)
+- Incorpora visões táticas (cenários macro que você define)
+- Combina os dois com peso proporcional à sua confiança
+- Resultado: retornos esperados ajustados que alimentam o HRP
+            """)
+        st.info(
+            "💡 **Juntos:** o HRP define a estrutura de risco e o BL define as expectativas "
+            "de retorno. Os pesos finais refletem tanto a diversificação robusta do HRP "
+            "quanto as visões táticas do investidor via BL."
+        )
+
+    # ── Seção 2: Os Ativos ────────────────────────────────────────────────────
+    with st.expander("📦 Os ativos da carteira", expanded=False):
+        ativos_info = [
+            ("IRF-M", "Renda fixa", "#E24B4A", "26.8%", "ANBIMA",
+             "Índice de títulos públicos **prefixados** (LTN e NTN-F). "
+             "Representa o mercado de renda fixa pré com duration variável (~2.5 anos). "
+             "Sobe quando os juros caem e cai quando os juros sobem (efeito MTM)."),
+            ("IMA-Geral", "Renda fixa", "#1D9E75", "18.8%", "ANBIMA",
+             "Índice de títulos públicos atrelados ao **IPCA** (NTN-B). "
+             "Protege contra a inflação e tem duration longa (~6 anos). "
+             "Muito sensível a movimentos na curva de juros reais."),
+            ("IHFA", "Âncora", "#378ADD", "17.2%", "ANBIMA",
+             "Índice de **fundos multimercado** brasileiros. "
+             "Representa a capacidade dos gestores de gerar alpha independente "
+             "do ciclo de mercado. Tem correlação baixa com os demais ativos."),
+            ("IDA-DI", "Âncora", "#888780", "14.4%", "ANBIMA",
+             "Índice de **debêntures atreladas ao CDI** (crédito privado pós-fixado). "
+             "Entrega CDI + spread de crédito. O spread abre em momentos de stress "
+             "(ex: caso Americanas) — capturando o risco de crédito do mercado corporativo."),
+            ("Ibovespa", "Equity", "#BA7517", "14.5%", "Yahoo Finance / Investing.com",
+             "Índice das **ações** mais negociadas na B3. "
+             "Representa o mercado acionário brasileiro. Alta volatilidade mas "
+             "potencial de retorno superior no longo prazo. Descorrelacionado da renda fixa."),
+            ("Internacional", "Equity", "#7F77DD", "8.3%", "Yahoo Finance (SPY + TLT)",
+             "**40% SPY** (S&P 500) + **60% TLT** (Treasuries 20 anos), convertidos para BRL via PTAX. "
+             "Diversificação geográfica e proteção cambial — quando o Brasil vai mal, "
+             "o dólar sobe e amplifica o retorno desta parcela em reais."),
+        ]
+        for nome, cluster, cor, peso, fonte, desc in ativos_info:
+            st.markdown(
+                f"<div style='border-left:3px solid {cor};padding:10px 16px;"
+                f"margin-bottom:10px;background:#f8f7f4;border-radius:0 6px 6px 0'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:center'>"
+                f"<strong style='font-size:14px;color:#1a1a18'>{nome}</strong>"
+                f"<span style='font-size:11px;color:#888780'>{cluster} · Peso: {peso} · Fonte: {fonte}</span>"
+                f"</div>"
+                f"<p style='font-size:13px;color:#444441;margin:6px 0 0'>{desc}</p>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+    # ── Seção 3: As Métricas ──────────────────────────────────────────────────
+    with st.expander("📊 As métricas — o que cada uma mede", expanded=False):
+        metricas = [
+            ("Retorno acumulado", "pos",
+             "Total ganho no período, em percentual. Se o portfólio foi de R$100 para R$615, "
+             "o retorno acumulado é +515%."),
+            ("Retorno a.a.", "good",
+             "Taxa de retorno anualizada — equivalente a quanto o portfólio rendeu "
+             "por ano em média, considerando juros compostos."),
+            ("Volatilidade a.a.", "warn",
+             "Desvio padrão dos retornos mensais, anualizado. Mede o quanto o portfólio "
+             "oscila. Menor volatilidade = trajetória mais suave."),
+            ("Sharpe (rf=CDI)", "pos",
+             "Retorno excedente ao CDI dividido pela volatilidade. "
+             "Responde: 'quanto de retorno extra você recebeu por unidade de risco?' "
+             "Acima de 0.5 é excelente para um portfólio conservador."),
+            ("Sortino", "pos",
+             "Similar ao Sharpe mas considera apenas a volatilidade das quedas "
+             "(não das altas). Penaliza só o risco ruim — mais justo para portfólios "
+             "assimétricos que têm mais altas que quedas."),
+            ("Max Drawdown", "warn",
+             "Maior queda do portfólio a partir de um pico. Se o portfólio foi a 100, "
+             "caiu para 93 e depois voltou, o drawdown foi -7%. "
+             "Mede o pior cenário que o investidor teria vivido."),
+            ("Calmar Ratio", "pos",
+             "Retorno anualizado dividido pelo Max Drawdown. "
+             "Quanto maior, melhor o portfólio compensa o risco de queda. "
+             "Acima de 1.0 é considerado bom."),
+            ("VaR 95% mensal", "warn",
+             "Value at Risk — em 95% dos meses o portfólio não perde mais do que esse valor. "
+             "Em 5% dos meses (os piores), a perda pode ser maior."),
+        ]
+        cols_met = st.columns(2)
+        for i, (nome, cls, desc) in enumerate(metricas):
+            cor_m = {"pos":"#0F6E56","warn":"#854F0B","good":"#185FA5"}.get(cls,"#1a1a18")
+            with cols_met[i % 2]:
+                st.markdown(
+                    f"<div style='margin-bottom:12px;padding:10px 14px;"
+                    f"background:#f8f7f4;border-radius:8px;"
+                    f"border-top:2px solid {cor_m}'>"
+                    f"<strong style='font-size:13px;color:{cor_m}'>{nome}</strong>"
+                    f"<p style='font-size:12px;color:#444441;margin:4px 0 0'>{desc}</p>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+    # ── Seção 4: As Abas ─────────────────────────────────────────────────────
+    with st.expander("🗂️ O que cada aba mostra e quando usar", expanded=False):
+        abas_info = [
+            ("📈 Retorno acumulado", "Visão principal do portfólio. Compare HRP+BL com CDI, Ibovespa, IPCA e o portfólio customizado. Use o filtro de período para ver janelas específicas e ative os eventos de cauda para contextualizar os movimentos."),
+            ("📉 Drawdown", "Mostra as quedas do portfólio a partir dos picos. Use para entender o risco real vivido pelo investidor e comparar com o Ibovespa. Quanto mais rasa a linha, mais protegido o portfólio."),
+            ("📊 Métricas", "Tabela comparativa de todas as métricas entre HRP+BL, CDI, Ibovespa e IPCA. Use para uma visão consolidada da qualidade do portfólio."),
+            ("🔄 Rebalanceamento", "Insira os pesos atuais da sua carteira e veja o drift em relação ao target HRP+BL. Use semestralmente para checar se o portfólio precisa ser rebalanceado. O botão de recálculo HRP sugere novos pesos com dados recentes."),
+            ("🌐 Cenários", "Simule o impacto de cenários macro (Selic, IPCA, PIB, câmbio) nos retornos esperados. Use o BL Dinâmico para obter sugestão de novos pesos baseada no cenário. Os resultados alimentam automaticamente o Monte Carlo."),
+            ("⚡ Eventos de cauda", "Analise como o portfólio se comportou em cada crise histórica. Use para demonstrar a resiliência do HRP+BL em momentos de stress e comparar com o Ibovespa."),
+            ("📦 Ativos individuais", "Retorno de cada ativo separadamente com filtros de período e marcação de eventos. Use para entender a contribuição individual e identificar qual ativo protegeu ou ganhou em cada crise."),
+            ("🔬 Análise comparativa", "Distribuição mensal dos retornos, consistência vs CDI e estatísticas descritivas. Use para entender o padrão de comportamento do portfólio além do retorno médio."),
+            ("📡 Monitoramento diário", "Retorno do dia/semana/mês/ano em frequência diária. Use mensalmente após atualizar as bases para verificar a performance recente e o drift dos pesos."),
+            ("📐 Janelas móveis", "Analisa quantas janelas de 36 ou 48 meses bateram o CDI ou o IPCA. É a 'prova real' da consistência do modelo — mostra que o resultado não depende do momento de entrada."),
+            ("🎲 Monte Carlo", "Projeta milhares de trajetórias possíveis para os próximos 5 anos com regimes de Markov. Use em conjunto com a aba Cenários para projeções prospectivas conectadas ao cenário macro."),
+        ]
+        for nome_aba, desc_aba in abas_info:
+            st.markdown(
+                f"<div style='margin-bottom:8px;padding:8px 14px;"
+                f"background:#f8f7f4;border-radius:6px'>"
+                f"<strong style='font-size:13px;color:#1a1a18'>{nome_aba}</strong>"
+                f"<p style='font-size:12px;color:#444441;margin:4px 0 0'>{desc_aba}</p>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+    # ── Seção 5: Rotina de atualização ────────────────────────────────────────
+    with st.expander("🔄 Rotina de atualização mensal", expanded=False):
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            st.markdown("""
+**✅ Automático — não precisa fazer nada**
+- CDI mensal — API Banco Central (SGS 4391)
+- PTAX (câmbio) — API Banco Central (SGS 3698)
+- IPCA — API Banco Central (SGS 433)
+- Ibovespa — Yahoo Finance (^BVSP)
+- SPY — Yahoo Finance
+- TLT — Yahoo Finance
+            """)
+        with col_r2:
+            st.markdown("""
+**📂 Manual — uma vez por mês**
+1. Baixar os 4 índices da ANBIMA:
+   [anbima.com.br/indices](https://www.anbima.com.br/pt_br/informar/indices.htm)
+2. Renomear: `IRFM.xls`, `IMA.xls`, `IHFA.xls`, `IDADI.xls`
+3. Subir no GitHub:
+   [upload/main](https://github.com/santosluisfelipe5502-spec/portfolio-hrp-bl/upload/main)
+4. Streamlit atualiza automaticamente em ~30 segundos
+            """)
+        st.markdown("""
+**📅 Semestral — manutenção do modelo**
+- Recalcular pesos HRP: aba **Rebalanceamento** → botão "Recalcular pesos HRP com dados recentes"
+- Revisar visões BL: aba **Cenários** → ajustar premissas macro e rodar BL Dinâmico
+- Atualizar câmbio base no código se o dólar mudar significativamente
+        """)
+
+    # ── Rodapé do guia ────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown(
+        "<div style='text-align:center;font-size:12px;color:#888780;padding:8px'>"
+        "Dashboard HRP + Black-Litterman · Desenvolvido com Streamlit · "
+        "Metodologia: López de Prado (2016) e Black & Litterman (1992) · "
+        "Dados: ANBIMA, BCB, Yahoo Finance, Investing.com"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
 
 # ── Tab 1: Retorno acumulado ──────────────────────────────────────────────────
 with tab1:
