@@ -722,9 +722,17 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
                 daily_series[nome] = raw
 
     # Ibovespa diário via yfinance
+    # Ibovespa diário — prioridade: yfinance > arquivo repositório
     ibov_daily_yf = fetch_yfinance("^BVSP", start="2005-01-01")
-    if ibov_daily_yf is not None:
+    if ibov_daily_yf is not None and len(ibov_daily_yf) > 30:
         daily_series["Ibovespa"] = ibov_daily_yf
+    else:
+        # Fallback: usar arquivo Ibovespa.csv do repositório (dados diários Investing.com)
+        repo_ibov_d, _ = load_from_repo("Ibovespa")
+        if repo_ibov_d is not None:
+            ibov_raw_d = read_from_df(repo_ibov_d, "Ibovespa.csv")
+            if ibov_raw_d is not None and len(ibov_raw_d) > 30:
+                daily_series["Ibovespa"] = ibov_raw_d
 
     # Internacional diário via yfinance
     spy_d = fetch_yfinance("SPY")
@@ -1703,6 +1711,11 @@ with tab5:
         "Ibovespa":  round(ret_ibov,      2),
         "Internac.": round(ret_intl,      2),
     }
+
+    # ── Salvar retornos no session_state para uso no Monte Carlo ──────────────
+    st.session_state["mc_asset_rets"]   = asset_rets
+    st.session_state["mc_cenario_nome"] = preset
+    st.session_state["mc_selic"]        = selic
 
     # ── Pesos customizados ──
     custom_w_sc = {}
@@ -3121,15 +3134,49 @@ with tab11:
                                      min_value=1, max_value=9999,
                                      help="Fixar para reproduzir resultados")
 
+    # ── Conexão com aba Cenários ──────────────────────────────────────────────
+    st.markdown("<div class='section-title'>conexão com cenários macro</div>",
+                unsafe_allow_html=True)
+
+    col_cn1, col_cn2 = st.columns(2)
+
+    # Verificar se há retornos esperados salvos da aba Cenários
+    usar_cenario_mc = col_cn1.checkbox(
+        "Usar retornos esperados da aba Cenários como mu",
+        value=True,
+        help="Quando ativo, o Monte Carlo usa os retornos esperados do cenário macro "
+             "definido na aba Cenários como média das simulações — tornando a projeção "
+             "prospectiva em vez de puramente histórica."
+    )
+
     # Opção de usar pesos BL Dinâmico
     usar_bl_mc = False
     if any(f"bl_dyn_{a['name']}" in st.session_state for a in ASSET_CFG):
         cenario_bl = st.session_state.get("bl_dyn_scenario", "—")
-        usar_bl_mc = st.checkbox(
+        usar_bl_mc = col_cn2.checkbox(
             f"Usar pesos BL Dinâmico (cenário: {cenario_bl})",
             value=True,
             help="Pesos calculados na aba Cenários → BL Dinâmico"
         )
+
+    # Mostrar status da conexão
+    if usar_cenario_mc:
+        # Verificar se há retornos do cenário disponíveis no session_state
+        cenario_nome = st.session_state.get("mc_cenario_nome", None)
+        cenario_rets = st.session_state.get("mc_asset_rets", None)
+        if cenario_rets:
+            st.success(
+                f"✅ Conectado ao cenário **{cenario_nome}** — "
+                f"retornos esperados carregados para {len(cenario_rets)} ativos."
+            )
+        else:
+            st.warning(
+                "⚠️ Nenhum cenário calculado ainda. Vá à aba **Cenários**, "
+                "defina os parâmetros macro e role até o fim da página — "
+                "os retornos serão salvos automaticamente para o Monte Carlo."
+            )
+    else:
+        st.info("📊 Usando retornos históricos (média 2009-2026) como mu das simulações.")
 
     rodar_mc = st.button("▶ Rodar simulação Monte Carlo", key="btn_mc")
 
@@ -3178,8 +3225,24 @@ with tab11:
                 regime_atual = 0  # Brasil hoje está em juro alto
 
                 # ── Parâmetros históricos por ativo ──────────────────────────
-                mu_hist  = ret_df_mc.mean().values        # retorno médio mensal
                 cov_hist = ret_df_mc.cov().values         # covariância mensal
+
+                # ── Mu: histórico ou cenário prospectivo ──────────────────────
+                cenario_rets_mc = st.session_state.get("mc_asset_rets", None)
+
+                if usar_cenario_mc and cenario_rets_mc:
+                    # Converter retornos anuais do cenário para mensais
+                    mu_cenario = np.array([
+                        (1 + cenario_rets_mc.get(a, ret_df_mc[a].mean()*12)/100)**(1/12) - 1
+                        for a in ativos_mc
+                    ])
+                    # Blend: 60% cenário + 40% histórico (evita extremos)
+                    mu_hist_arr = ret_df_mc.mean().values
+                    mu_hist = 0.60 * mu_cenario + 0.40 * mu_hist_arr
+                    cenario_fonte = f"cenário '{st.session_state.get('mc_cenario_nome','—')}' (60%) + histórico (40%)"
+                else:
+                    mu_hist = ret_df_mc.mean().values
+                    cenario_fonte = "histórico puro 2009-2026"
 
                 # ── Simulação ────────────────────────────────────────────────
                 def simular_portfolio(pesos, n_sim, n_meses):
@@ -3394,7 +3457,8 @@ with tab11:
                 st.caption(
                     f"Baseado em {n_sim:,} simulações com regimes de Markov calibrados "
                     f"no histórico BR 2009-2026. "
-                    f"Regime de partida: juro alto (Selic atual 14.5%)."
+                    f"Regime de partida: juro alto (Selic atual 14.5%). "
+                    f"Retornos esperados (mu): {cenario_fonte}."
                 )
                 if p_bate_cdi >= 60:
                     st.success(
