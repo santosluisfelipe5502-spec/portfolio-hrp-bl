@@ -1159,56 +1159,59 @@ def hex_to_rgba(hex_color, alpha=0.5):
 
 # ── Funções de geração de PDF ────────────────────────────────────────────────
 def fig_to_image(fig, width=700, height=350):
-    """Converte figura Plotly para bytes PNG usando matplotlib como fallback."""
-    # Tentativa 1: kaleido (requer Chrome)
-    try:
-        img = fig.to_image(format="png", width=width, height=height, scale=2)
-        if img:
-            return img
-    except Exception:
-        pass
-
-    # Tentativa 2: matplotlib como fallback (sempre disponível)
+    """Converte figura Plotly para PNG via matplotlib (sempre disponível)."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        import matplotlib.patches as mpatches
+        import matplotlib.dates as mdates
+        import pandas as _pd
 
         fig_mpl, ax = plt.subplots(figsize=(width/100, height/100), dpi=100)
         ax.set_facecolor("#f8f7f4")
         fig_mpl.patch.set_facecolor("#f8f7f4")
 
         colors_cycle = ["#378ADD","#1D9E75","#E24B4A","#BA7517","#7F77DD","#888780","#C4770A"]
+        has_dates = False
 
         for i, trace in enumerate(fig.data):
-            cor = colors_cycle[i % len(colors_cycle)]
-            x = list(trace.x) if hasattr(trace, "x") and trace.x is not None else []
-            y = list(trace.y) if hasattr(trace, "y") and trace.y is not None else []
-
-            if not x or not y:
+            cor  = colors_cycle[i % len(colors_cycle)]
+            x_raw = list(trace.x) if hasattr(trace,"x") and trace.x is not None else []
+            y_raw = list(trace.y) if hasattr(trace,"y") and trace.y is not None else []
+            if not x_raw or not y_raw:
                 continue
 
-            name = trace.name if hasattr(trace, "name") else f"Série {i+1}"
-            lw   = 2.0 if i == 0 else 1.2
-            ls   = "-" if i == 0 else ("--" if i == 1 else ":")
+            name  = getattr(trace, "name", f"Série {i+1}") or f"Série {i+1}"
+            lw    = 2.0 if i == 0 else 1.2
+            ls    = "-" if i == 0 else ("--" if i == 1 else ":")
+            ttype = type(trace).__name__.lower()
 
-            # Detectar tipo de trace
-            trace_type = type(trace).__name__.lower()
-            if "bar" in trace_type:
-                ax.bar(range(len(y)), y, label=name, color=cor, alpha=0.75, width=0.35)
-            elif hasattr(trace, "fill") and trace.fill in ("tozeroy","tonexty","toself"):
-                ax.fill_between(range(len(y)), y, alpha=0.20, color=cor)
-                ax.plot(range(len(y)), y, color=cor, linewidth=lw, linestyle=ls, label=name)
+            # Tentar converter X para datas
+            try:
+                x_plot = [_pd.Timestamp(xi) for xi in x_raw]
+                has_dates = True
+            except Exception:
+                x_plot = list(range(len(y_raw)))
+
+            if "bar" in ttype:
+                ax.bar(x_plot, y_raw, label=name, color=cor, alpha=0.75)
+            elif hasattr(trace,"fill") and getattr(trace,"fill","") in ("tozeroy","tonexty","toself"):
+                ax.fill_between(x_plot, y_raw, alpha=0.15, color=cor)
+                ax.plot(x_plot, y_raw, color=cor, lw=lw, ls=ls, label=name)
             else:
-                ax.plot(range(len(y)), y, color=cor, linewidth=lw, linestyle=ls, label=name)
+                ax.plot(x_plot, y_raw, color=cor, lw=lw, ls=ls, label=name)
 
-        ax.axhline(0, color="#888780", linewidth=0.8, linestyle="-")
-        ax.set_xlabel("")
-        ax.set_ylabel("%")
+        if has_dates:
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+            ax.xaxis.set_major_locator(mdates.YearLocator(2))
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, fontsize=7)
+
+        ax.axhline(0, color="#888780", lw=0.8)
+        ax.set_ylabel("%", fontsize=8)
         ax.legend(fontsize=7, loc="upper left")
         ax.grid(True, alpha=0.3, color="#e8e6e0")
         ax.spines[["top","right"]].set_visible(False)
+        ax.tick_params(axis="both", labelsize=7)
         plt.tight_layout(pad=0.5)
 
         buf = io.BytesIO()
@@ -1217,7 +1220,7 @@ def fig_to_image(fig, width=700, height=350):
         plt.close(fig_mpl)
         buf.seek(0)
         return buf.read()
-    except Exception:
+    except Exception as _e:
         return None
 
 def fig_to_reportlab(fig, width=700, height=350):
