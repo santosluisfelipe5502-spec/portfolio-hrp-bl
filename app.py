@@ -848,33 +848,33 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
             for a in ASSET_CFG:
                 nome = a["name"]
                 w_min, w_max = bandas.get(nome, (0.0, 100.0))
-                w_clip[nome] = float(np.clip(w_hrp_raw.get(nome, a["w"]),
-                                              w_min/100, w_max/100))
+                # float() garante cópia independente do array read-only
+                w_raw = float(w_hrp_raw.get(nome, a["w"]))
+                w_clip[nome] = float(np.clip(w_raw, w_min/100, w_max/100))
 
             # Renormalizar para somar 1
             total_w = sum(w_clip.values())
-            pesos_perfil = {k: v/total_w for k, v in w_clip.items()}
+            pesos_perfil = {k: float(v/total_w) for k, v in w_clip.items()}
 
             # Verificar restrição de volatilidade
-            ret_arr = ret_df_perfil.values
-            w_arr   = np.array([pesos_perfil[a["name"]] for a in ASSET_CFG])
-            cov_p   = ret_df_perfil.cov().values
+            w_arr = np.array([float(pesos_perfil[a["name"]]) for a in ASSET_CFG],
+                              dtype=float)
+            cov_p = ret_df_perfil.cov().values.copy()
             vol_perfil_calc = float(np.sqrt(w_arr @ cov_p @ w_arr) * np.sqrt(12) * 100)
 
             # Se volatilidade fora da banda, ajustar via scaling
             vol_min_p = perfil_cfg["vol_min"]
             vol_max_p = perfil_cfg["vol_max"]
             if vol_perfil_calc > vol_max_p:
-                # Reduzir pesos de equity, aumentar IDA-DI
                 fator = vol_max_p / vol_perfil_calc
+                pesos_ajust = {k: float(v) for k, v in pesos_perfil.items()}
                 for nome in ["Ibovespa","Internac.","IRF-M","IMA"]:
-                    pesos_perfil[nome] *= fator
-                # Redistribuir para IDA-DI e IHFA
-                excesso = 1 - sum(pesos_perfil.values())
-                pesos_perfil["IDA-DI"] = pesos_perfil.get("IDA-DI",0) + excesso * 0.7
-                pesos_perfil["IHFA"]   = pesos_perfil.get("IHFA",0)   + excesso * 0.3
-                total_w = sum(pesos_perfil.values())
-                pesos_perfil = {k: v/total_w for k, v in pesos_perfil.items()}
+                    pesos_ajust[nome] = pesos_ajust.get(nome, 0) * fator
+                excesso = 1.0 - sum(pesos_ajust.values())
+                pesos_ajust["IDA-DI"] = pesos_ajust.get("IDA-DI",0) + excesso * 0.7
+                pesos_ajust["IHFA"]   = pesos_ajust.get("IHFA",0)   + excesso * 0.3
+                total_w2 = sum(pesos_ajust.values())
+                pesos_perfil = {k: float(v/total_w2) for k, v in pesos_ajust.items()}
 
         except Exception as e_perfil:
             # Fallback: usar pesos padrão HRP
