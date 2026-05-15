@@ -140,8 +140,9 @@ def compute_hrp(returns_df):
 
     # Etapa 1: Matriz de distância
     dist = np.sqrt((1 - corr) / 2)
-    np.fill_diagonal(dist.values, 0)
-    dist_sq = squareform(dist.values)
+    dist_arr = dist.values.copy()  # cópia para evitar read-only
+    np.fill_diagonal(dist_arr, 0)
+    dist_sq = squareform(dist_arr)
 
     # Etapa 2: Clusterização hierárquica
     link = linkage(dist_sq, method="single")
@@ -179,7 +180,9 @@ def compute_hrp(returns_df):
         return weights / weights.sum()
 
     w = hrp_alloc(cov_ord, ativos_ord)
-    return w.reindex([a["name"] for a in ASSET_CFG]).fillna(0)
+    # Forçar cópia com dtype float para evitar array read-only
+    result = w.reindex([a["name"] for a in ASSET_CFG]).fillna(0)
+    return pd.Series(result.values.copy().astype(float), index=result.index)
 COLORS  = {a["name"]: a["color"] for a in ASSET_CFG}
 
 # ── Funções utilitárias ──────────────────────────────────────────────────────
