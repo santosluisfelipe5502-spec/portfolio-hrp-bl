@@ -896,11 +896,20 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     if perfil_sel != "HRP+BL Original":
         port_ret_original = port_ret.copy()
         port_ret = port_ret_perfil
-        # Atualizar WEIGHTS temporariamente para o perfil
         WEIGHTS_PERFIL = pesos_perfil.copy()
     else:
         port_ret_original = port_ret.copy()
         WEIGHTS_PERFIL = WEIGHTS.copy()
+
+    # WEIGHTS_ATIVO é o dicionário de pesos ativos no perfil selecionado
+    # Usado em todas as abas para garantir consistência
+    WEIGHTS_ATIVO = WEIGHTS_PERFIL.copy()
+
+    # Atualizar também cfg["w"] para refletir o perfil nas labels/tabelas
+    _pesos_display = {
+        cfg["name"]: WEIGHTS_ATIVO.get(cfg["name"], cfg["w"])
+        for cfg in ASSET_CFG
+    }
 
     m_port = metrics(port_ret, cdi_aligned)
     m_ibov = metrics(ibov_ret, cdi_aligned)
@@ -1883,8 +1892,9 @@ with tab4:
 
     drift_data = []
     for cfg in ASSET_CFG:
-        d = atual[cfg["name"]] - cfg["w"] * 100
-        drift_data.append({"Ativo": cfg["name"], "Target": cfg["w"]*100,
+        _w_target_perf = _pesos_display.get(cfg["name"], cfg["w"]) * 100
+        d = atual[cfg["name"]] - _w_target_perf
+        drift_data.append({"Ativo": cfg["name"], "Target": _w_target_perf,
                            "Atual": atual[cfg["name"]], "Drift": d,
                            "Fora da banda": abs(d) > banda, "color": cfg["color"]})
 
@@ -2153,7 +2163,7 @@ with tab5:
     custom_valid_sc = abs(total_cw_sc - 1.0) < 0.02
 
     # ── Retornos totais ponderados ──
-    port_ret_sc    = sum(WEIGHTS[k] * v for k, v in asset_rets.items())
+    port_ret_sc    = sum(WEIGHTS_ATIVO.get(k, WEIGHTS.get(k,0)) * v for k, v in asset_rets.items())
     custom_ret_sc  = sum(custom_w_sc[k] * v for k, v in asset_rets.items()) if custom_valid_sc else None
     equal_ret_sc   = sum((1/6) * v for v in asset_rets.values())
     premium_sc     = port_ret_sc - selic
@@ -2808,7 +2818,7 @@ with tab7:
             "Vol. a.a.":        f"{vol_an:.1f}%",
             "Sharpe":           f"{sh:.3f}" if sh else "—",
             "Max Drawdown":     f"{max_dd:.1f}%",
-            "Peso HRP+BL":      f"{cfg['w']*100:.1f}%",
+            "Peso HRP+BL":      f"{_pesos_display.get(cfg['name'], cfg['w'])*100:.1f}%",
         })
 
     if rows_at:
@@ -3963,7 +3973,8 @@ with tab12:
         ret_a = (series[cfg["name"]]["valor"]
                  .pct_change().dropna()
                  .reindex(idx_at2).ffill().fillna(0))
-        contrib_dict[cfg["name"]] = ret_a * cfg["w"] * 100  # contribuição em %
+        w_ativo = _pesos_display.get(cfg["name"], cfg["w"])
+        contrib_dict[cfg["name"]] = ret_a * w_ativo * 100  # contribuição em %
 
     df_contrib = pd.DataFrame(contrib_dict)
     df_contrib.index = pd.to_datetime(df_contrib.index)
