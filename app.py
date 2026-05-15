@@ -9,6 +9,12 @@ from datetime import datetime, date
 import io, warnings
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import squareform
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
 # ── Layout padrão Plotly (não usado diretamente — inline em cada gráfico) ──
 _UNUSED = dict(
@@ -1151,6 +1157,403 @@ def hex_to_rgba(hex_color, alpha=0.5):
         return f"rgba({r},{g},{b},{alpha})"
     return hex_color
 
+# ── Funções de geração de PDF ────────────────────────────────────────────────
+def fig_to_image(fig, width=700, height=350):
+    """Converte figura Plotly para bytes PNG. Retorna None se kaleido não disponível."""
+    try:
+        return fig.to_image(format="png", width=width, height=height, scale=2)
+    except Exception:
+        return None
+
+def fig_to_reportlab(fig, width=700, height=350):
+    """Converte figura Plotly para objeto Image do reportlab."""
+    try:
+        from reportlab.platypus import Image as RLImage
+        img_bytes = fig_to_image(fig, width, height)
+        if img_bytes:
+            return RLImage(io.BytesIO(img_bytes), width=16*cm, height=8*cm)
+    except Exception:
+        pass
+    return None
+
+def gerar_pdf_gestor(dados):
+    """Gera relatório técnico completo para o gestor."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4,
+                            rightMargin=2*cm, leftMargin=2*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    styles = getSampleStyleSheet()
+
+    # Estilos customizados
+    title_style = ParagraphStyle("Title", parent=styles["Title"],
+                                  fontSize=20, textColor=colors.HexColor("#1a1a18"),
+                                  spaceAfter=6)
+    subtitle_style = ParagraphStyle("Subtitle", parent=styles["Normal"],
+                                     fontSize=10, textColor=colors.HexColor("#888780"),
+                                     spaceAfter=20)
+    section_style = ParagraphStyle("Section", parent=styles["Heading2"],
+                                    fontSize=11, textColor=colors.HexColor("#378ADD"),
+                                    spaceBefore=16, spaceAfter=8,
+                                    fontName="Helvetica-Bold")
+    body_style = ParagraphStyle("Body", parent=styles["Normal"],
+                                 fontSize=9, textColor=colors.HexColor("#444441"),
+                                 spaceAfter=6)
+    kpi_label_style = ParagraphStyle("KPILabel", parent=styles["Normal"],
+                                      fontSize=7, textColor=colors.HexColor("#888780"),
+                                      fontName="Helvetica")
+    kpi_value_style = ParagraphStyle("KPIValue", parent=styles["Normal"],
+                                      fontSize=14, textColor=colors.HexColor("#1a1a18"),
+                                      fontName="Helvetica-Bold")
+
+    story = []
+
+    # ── Capa ──────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 2*cm))
+    story.append(Paragraph("HRP + Black-Litterman", title_style))
+    story.append(Paragraph("Relatório de Performance — Gestor", subtitle_style))
+    story.append(Paragraph(
+        f"Período: {dados['periodo']} · "
+        f"Perfil: {dados['perfil']} · "
+        f"Gerado em: {dados['data_geracao']}",
+        body_style
+    ))
+    story.append(HRFlowable(width="100%", thickness=1,
+                             color=colors.HexColor("#e8e6e0"), spaceAfter=20))
+
+    # ── KPIs principais ───────────────────────────────────────────────────────
+    story.append(Paragraph("Indicadores de Performance", section_style))
+
+    kpi_data = [
+        ["Acumulado", "Retorno a.a.", "Volatilidade", "Sharpe", "Sortino", "Max DD", "Calmar"],
+        [dados["acumulado"], dados["retorno_aa"], dados["volatilidade"],
+         dados["sharpe"], dados["sortino"], dados["max_dd"], dados["calmar"]],
+        [f"CDI: {dados['acum_cdi']}", f"IBOV: {dados['ret_ibov']}",
+         f"IBOV: {dados['vol_ibov']}", f"IBOV: {dados['sharpe_ibov']}",
+         "penaliza quedas", f"IBOV: {dados['dd_ibov']}", f"IBOV: {dados['calmar_ibov']}"],
+    ]
+    kpi_table = Table(kpi_data, colWidths=[2.4*cm]*7)
+    kpi_table.setStyle(TableStyle([
+        ("BACKGROUND",  (0,0), (-1,0), colors.HexColor("#f8f7f4")),
+        ("FONTNAME",    (0,0), (-1,0), "Helvetica"),
+        ("FONTSIZE",    (0,0), (-1,0), 7),
+        ("TEXTCOLOR",   (0,0), (-1,0), colors.HexColor("#888780")),
+        ("FONTNAME",    (0,1), (-1,1), "Helvetica-Bold"),
+        ("FONTSIZE",    (0,1), (-1,1), 11),
+        ("TEXTCOLOR",   (0,1), (-1,1), colors.HexColor("#1a1a18")),
+        ("FONTSIZE",    (0,2), (-1,2), 7),
+        ("TEXTCOLOR",   (0,2), (-1,2), colors.HexColor("#888780")),
+        ("ALIGN",       (0,0), (-1,-1), "CENTER"),
+        ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
+        ("GRID",        (0,0), (-1,-1), 0.5, colors.HexColor("#e8e6e0")),
+        ("ROWBACKGROUNDS", (0,0), (-1,-1),
+         [colors.HexColor("#f8f7f4"), colors.white, colors.HexColor("#f8f7f4")]),
+        ("TOPPADDING",  (0,0), (-1,-1), 6),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 6),
+    ]))
+    story.append(kpi_table)
+    story.append(Spacer(1, 0.5*cm))
+
+    # ── Pesos do portfólio ────────────────────────────────────────────────────
+    story.append(Paragraph("Composição do Portfólio", section_style))
+    pesos_header = ["Ativo", "Cluster", "Peso", "Vol. histórica"]
+    pesos_rows = [[p["ativo"], p["cluster"], p["peso"], p["vol"]]
+                  for p in dados["pesos"]]
+    pesos_data = [pesos_header] + pesos_rows
+    pesos_table = Table(pesos_data, colWidths=[4*cm, 4*cm, 3*cm, 3*cm])
+    pesos_table.setStyle(TableStyle([
+        ("BACKGROUND",  (0,0), (-1,0), colors.HexColor("#378ADD")),
+        ("TEXTCOLOR",   (0,0), (-1,0), colors.white),
+        ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE",    (0,0), (-1,-1), 9),
+        ("ALIGN",       (2,0), (-1,-1), "CENTER"),
+        ("GRID",        (0,0), (-1,-1), 0.5, colors.HexColor("#e8e6e0")),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1),
+         [colors.white, colors.HexColor("#f8f7f4")]),
+        ("TOPPADDING",  (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 5),
+    ]))
+    story.append(pesos_table)
+
+    # ── Métricas comparativas ─────────────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("Comparativo de Métricas", section_style))
+    metr_data = [["Métrica", "HRP+BL", "CDI", "Ibovespa", "IPCA"]] +                 [[r["metrica"], r["hrpbl"], r["cdi"], r["ibov"], r["ipca"]]
+                 for r in dados["metricas"]]
+    metr_table = Table(metr_data, colWidths=[4.5*cm, 3*cm, 3*cm, 3*cm, 3*cm])
+    metr_table.setStyle(TableStyle([
+        ("BACKGROUND",  (0,0), (-1,0), colors.HexColor("#1a1a18")),
+        ("TEXTCOLOR",   (0,0), (-1,0), colors.white),
+        ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE",    (0,0), (-1,-1), 9),
+        ("ALIGN",       (1,0), (-1,-1), "CENTER"),
+        ("GRID",        (0,0), (-1,-1), 0.5, colors.HexColor("#e8e6e0")),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1),
+         [colors.white, colors.HexColor("#f8f7f4")]),
+        ("TOPPADDING",  (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 5),
+    ]))
+    story.append(metr_table)
+
+    # ── Eventos de cauda ──────────────────────────────────────────────────────
+    story.append(Spacer(1, 0.5*cm))
+    story.append(Paragraph("Performance em Eventos de Cauda", section_style))
+    ev_data = [["Evento", "Período", "HRP+BL", "CDI", "Ibovespa"]] +               [[e["evento"], e["periodo"], e["hrpbl"], e["cdi"], e["ibov"]]
+               for e in dados["eventos"]]
+    ev_table = Table(ev_data, colWidths=[4.5*cm, 3.5*cm, 2.5*cm, 2.5*cm, 2.5*cm])
+    ev_table.setStyle(TableStyle([
+        ("BACKGROUND",  (0,0), (-1,0), colors.HexColor("#854F0B")),
+        ("TEXTCOLOR",   (0,0), (-1,0), colors.white),
+        ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE",    (0,0), (-1,-1), 8),
+        ("ALIGN",       (2,0), (-1,-1), "CENTER"),
+        ("GRID",        (0,0), (-1,-1), 0.5, colors.HexColor("#e8e6e0")),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1),
+         [colors.white, colors.HexColor("#f8f7f4")]),
+        ("TOPPADDING",  (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 4),
+    ]))
+    story.append(ev_table)
+
+    # ── Gráficos (se kaleido disponível) ─────────────────────────────────────
+    if dados.get("fig_retorno"):
+        story.append(PageBreak())
+        story.append(Paragraph("Retorno Acumulado", section_style))
+        img = fig_to_reportlab(dados["fig_retorno"])
+        if img:
+            story.append(img)
+        else:
+            story.append(Paragraph(
+                "Gráfico não disponível neste ambiente. "
+                "Visualize no dashboard online.", body_style))
+
+    if dados.get("fig_drawdown"):
+        story.append(Spacer(1, 0.5*cm))
+        story.append(Paragraph("Drawdown", section_style))
+        img = fig_to_reportlab(dados["fig_drawdown"])
+        if img:
+            story.append(img)
+
+    # ── Janelas móveis ────────────────────────────────────────────────────────
+    if dados.get("janelas"):
+        story.append(PageBreak())
+        story.append(Paragraph("Consistência em Janelas Móveis", section_style))
+        story.append(Paragraph(
+            f"Em {dados['janelas']['pct_acima_cdi']:.0f}% das janelas de "
+            f"{dados['janelas']['n_meses']} meses o portfólio superou o CDI, "
+            f"com excesso mediano de {dados['janelas']['excesso_mediano']:+.1f}%.",
+            body_style
+        ))
+        jm_data = [["Portfólio", "% janelas > CDI", "% janelas > IPCA",
+                     "Mediana acum.", "Melhor janela", "Pior janela"]]
+        for r in dados["janelas"]["rows"]:
+            jm_data.append([r["portfolio"], r["pct_cdi"], r["pct_ipca"],
+                            r["mediana"], r["melhor"], r["pior"]])
+        jm_table = Table(jm_data, colWidths=[3.5*cm,3*cm,3*cm,2.5*cm,2.5*cm,2.5*cm])
+        jm_table.setStyle(TableStyle([
+            ("BACKGROUND",  (0,0), (-1,0), colors.HexColor("#378ADD")),
+            ("TEXTCOLOR",   (0,0), (-1,0), colors.white),
+            ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",    (0,0), (-1,-1), 8),
+            ("ALIGN",       (1,0), (-1,-1), "CENTER"),
+            ("GRID",        (0,0), (-1,-1), 0.5, colors.HexColor("#e8e6e0")),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1),
+             [colors.white, colors.HexColor("#f8f7f4")]),
+            ("TOPPADDING",  (0,0), (-1,-1), 5),
+            ("BOTTOMPADDING",(0,0), (-1,-1), 5),
+        ]))
+        story.append(jm_table)
+
+        if dados["janelas"].get("fig"):
+            img = fig_to_reportlab(dados["janelas"]["fig"], height=300)
+            if img:
+                story.append(Spacer(1, 0.3*cm))
+                story.append(img)
+
+    # ── Monte Carlo ───────────────────────────────────────────────────────────
+    if dados.get("monte_carlo"):
+        story.append(PageBreak())
+        story.append(Paragraph("Projeção Monte Carlo — 5 anos", section_style))
+        story.append(Paragraph(
+            f"Baseado em {dados['monte_carlo']['n_sim']:,} simulações com regimes "
+            f"de Markov calibrados no histórico brasileiro 2009-2026. "
+            f"Perfil: {dados['perfil']}.",
+            body_style
+        ))
+        mc_data = [["Horizonte", "P10", "P50 (mediana)", "P90",
+                     "P(bater CDI)", "P(DD>5%)", "P(DD>10%)"]]
+        for r in dados["monte_carlo"]["rows"]:
+            mc_data.append([r["horizonte"], r["p10"], r["p50"], r["p90"],
+                           r["p_cdi"], r["p_dd5"], r["p_dd10"]])
+        mc_table = Table(mc_data, colWidths=[3*cm,2*cm,3*cm,2*cm,2.5*cm,2.5*cm,2.5*cm])
+        mc_table.setStyle(TableStyle([
+            ("BACKGROUND",  (0,0), (-1,0), colors.HexColor("#1a1a18")),
+            ("TEXTCOLOR",   (0,0), (-1,0), colors.white),
+            ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",    (0,0), (-1,-1), 8),
+            ("ALIGN",       (1,0), (-1,-1), "CENTER"),
+            ("GRID",        (0,0), (-1,-1), 0.5, colors.HexColor("#e8e6e0")),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1),
+             [colors.white, colors.HexColor("#f8f7f4")]),
+            ("TOPPADDING",  (0,0), (-1,-1), 5),
+            ("BOTTOMPADDING",(0,0), (-1,-1), 5),
+        ]))
+        story.append(mc_table)
+
+        if dados["monte_carlo"].get("fig"):
+            img = fig_to_reportlab(dados["monte_carlo"]["fig"])
+            if img:
+                story.append(Spacer(1, 0.3*cm))
+                story.append(img)
+
+    # ── Rodapé ────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 1*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5,
+                             color=colors.HexColor("#e8e6e0")))
+    story.append(Paragraph(
+        f"HRP + Black-Litterman Dashboard · Metodologia: López de Prado (2016) e "
+        f"Black & Litterman (1992) · Dados: ANBIMA, BCB, Yahoo Finance · "
+        f"rf = CDI médio {dados['rf_pct']} a.a.",
+        ParagraphStyle("Footer", parent=styles["Normal"],
+                        fontSize=7, textColor=colors.HexColor("#888780"),
+                        alignment=TA_CENTER, spaceBefore=6)
+    ))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
+def gerar_pdf_cliente(dados):
+    """Gera relatório simplificado e visual para o cliente final."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4,
+                            rightMargin=2*cm, leftMargin=2*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle("Title", parent=styles["Title"],
+                                  fontSize=22, textColor=colors.HexColor("#1a1a18"),
+                                  spaceAfter=4)
+    subtitle_style = ParagraphStyle("Subtitle", parent=styles["Normal"],
+                                     fontSize=11, textColor=colors.HexColor("#888780"),
+                                     spaceAfter=24)
+    section_style = ParagraphStyle("Section", parent=styles["Heading2"],
+                                    fontSize=12, textColor=colors.HexColor("#378ADD"),
+                                    spaceBefore=20, spaceAfter=10,
+                                    fontName="Helvetica-Bold")
+    body_style = ParagraphStyle("Body", parent=styles["Normal"],
+                                 fontSize=10, textColor=colors.HexColor("#444441"),
+                                 spaceAfter=8, leading=16)
+
+    story = []
+
+    # ── Capa ──────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 1.5*cm))
+    story.append(Paragraph("Relatório de Portfólio", title_style))
+    story.append(Paragraph(
+        f"Perfil: {dados['perfil']} · Período: {dados['periodo']}",
+        subtitle_style
+    ))
+    story.append(HRFlowable(width="100%", thickness=2,
+                             color=colors.HexColor("#378ADD"), spaceAfter=24))
+
+    # ── Resumo em linguagem simples ───────────────────────────────────────────
+    story.append(Paragraph("Como foi o seu portfólio?", section_style))
+    story.append(Paragraph(
+        f"No período analisado, seu portfólio acumulou <b>{dados['acumulado']}</b> de retorno, "
+        f"com retorno anualizado de <b>{dados['retorno_aa']}</b>. "
+        f"No mesmo período, o CDI rendeu {dados['acum_cdi']} e o Ibovespa (bolsa) "
+        f"variou {dados['acum_ibov']}.",
+        body_style
+    ))
+    story.append(Paragraph(
+        f"A volatilidade do portfólio foi de <b>{dados['volatilidade']}</b> ao ano — "
+        f"muito inferior à bolsa ({dados['vol_ibov']}), indicando um perfil conservador "
+        f"de oscilações.",
+        body_style
+    ))
+
+    # ── Indicadores principais (simplificados) ────────────────────────────────
+    story.append(Paragraph("Indicadores principais", section_style))
+    kpi_simple = [
+        ["Indicador", "Seu portfólio", "O que significa"],
+        ["Retorno acumulado", dados["acumulado"],
+         "Total ganho no período"],
+        ["Retorno anual", dados["retorno_aa"],
+         "Média por ano (juros compostos)"],
+        ["Volatilidade", dados["volatilidade"],
+         "Oscilação — quanto menor, mais estável"],
+        ["Max. queda", dados["max_dd"],
+         "Maior queda do pico até o fundo"],
+        ["vs CDI", dados["acum_cdi"],
+         "O que a renda fixa conservadora rendeu"],
+    ]
+    kpi_s_table = Table(kpi_simple, colWidths=[4.5*cm, 3*cm, 8.5*cm])
+    kpi_s_table.setStyle(TableStyle([
+        ("BACKGROUND",  (0,0), (-1,0), colors.HexColor("#378ADD")),
+        ("TEXTCOLOR",   (0,0), (-1,0), colors.white),
+        ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE",    (0,0), (-1,-1), 9),
+        ("GRID",        (0,0), (-1,-1), 0.5, colors.HexColor("#e8e6e0")),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1),
+         [colors.white, colors.HexColor("#f8f7f4")]),
+        ("TOPPADDING",  (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 7),
+        ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
+    ]))
+    story.append(kpi_s_table)
+
+    # ── Como seu dinheiro está dividido ───────────────────────────────────────
+    story.append(Paragraph("Como seu dinheiro está dividido", section_style))
+    pesos_simple = [["Tipo de investimento", "Percentual", "Função"]]
+    funcoes = {
+        "IRF-M":    "Renda fixa prefixada — protege contra queda de juros",
+        "IMA":      "Títulos atrelados à inflação — proteção do poder de compra",
+        "IHFA":     "Fundos multimercado — geração de retorno diversificado",
+        "IDA-DI":   "Crédito privado pós-fixado — retorno acima do CDI",
+        "Ibovespa": "Ações brasileiras — potencial de retorno no longo prazo",
+        "Internac.":"Investimentos internacionais — diversificação cambial",
+    }
+    for p in dados["pesos"]:
+        pesos_simple.append([
+            p["ativo"], p["peso"],
+            funcoes.get(p["ativo"], "—")
+        ])
+    p_s_table = Table(pesos_simple, colWidths=[3.5*cm, 2.5*cm, 10*cm])
+    p_s_table.setStyle(TableStyle([
+        ("BACKGROUND",  (0,0), (-1,0), colors.HexColor("#1a1a18")),
+        ("TEXTCOLOR",   (0,0), (-1,0), colors.white),
+        ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE",    (0,0), (-1,-1), 9),
+        ("ALIGN",       (1,0), (1,-1), "CENTER"),
+        ("GRID",        (0,0), (-1,-1), 0.5, colors.HexColor("#e8e6e0")),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1),
+         [colors.white, colors.HexColor("#f8f7f4")]),
+        ("TOPPADDING",  (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 7),
+        ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
+    ]))
+    story.append(p_s_table)
+
+    # ── Rodapé ────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 1.5*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5,
+                             color=colors.HexColor("#e8e6e0")))
+    story.append(Paragraph(
+        f"Relatório gerado em {dados['data_geracao']} · "
+        f"Metodologia HRP + Black-Litterman · "
+        f"As informações deste relatório têm caráter informativo e não constituem "
+        f"recomendação de investimento.",
+        ParagraphStyle("Footer", parent=styles["Normal"],
+                        fontSize=7, textColor=colors.HexColor("#888780"),
+                        alignment=TA_CENTER, spaceBefore=8)
+    ))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
 # ── Tabs principais ─────────────────────────────────────────────────────────
 tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
     "📖 Guia",
@@ -1725,6 +2128,276 @@ with tab3:
         "Contrib. risco": f"{a['w']*a['vol'] / sum(x['w']*x['vol'] for x in ASSET_CFG)*100:.1f}%",
     } for a in ASSET_CFG])
     st.dataframe(alloc_df, use_container_width=True, hide_index=True)
+
+    # ── Exportação PDF ───────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("<div class='section-title'>exportar relatório</div>",
+                unsafe_allow_html=True)
+
+    col_pdf1, col_pdf2 = st.columns(2)
+
+    with col_pdf1:
+        st.markdown("**📋 Relatório do Gestor**")
+        st.caption("Versão técnica completa — KPIs, pesos, métricas comparativas e eventos de cauda.")
+        if st.button("Gerar PDF — Gestor", key="btn_pdf_gestor", type="primary"):
+            with st.spinner("Gerando relatório..."):
+                try:
+                    # Montar dados para o PDF
+                    from datetime import datetime
+
+                    # Eventos de cauda — calcular retorno em cada evento
+                    eventos_pdf = []
+                    for ev in TAIL_EVENTS[:8]:  # Top 8 eventos
+                        try:
+                            ev_s = pd.Timestamp(ev["start"])
+                            ev_e = pd.Timestamp(ev["end"])
+                            idx_ev = common_idx[(common_idx >= ev_s) & (common_idx <= ev_e)]
+                            if len(idx_ev) > 0:
+                                r_hrp  = (1+port_ret.reindex(idx_ev).fillna(0)).prod()-1
+                                r_cdi  = (1+cdi_aligned.reindex(idx_ev).fillna(0)).prod()-1
+                                r_ibov = (1+ibov_ret.reindex(idx_ev).fillna(0)).prod()-1
+                                eventos_pdf.append({
+                                    "evento":  ev["name"],
+                                    "periodo": f"{ev_s.strftime('%b/%Y')}→{ev_e.strftime('%b/%Y')}",
+                                    "hrpbl":   f"{r_hrp*100:+.1f}%",
+                                    "cdi":     f"{r_cdi*100:+.1f}%",
+                                    "ibov":    f"{r_ibov*100:+.1f}%",
+                                })
+                        except Exception:
+                            pass
+
+                    dados_pdf = {
+                        "periodo":      f"{common_idx[0].strftime('%b/%Y')} → {common_idx[-1].strftime('%b/%Y')}",
+                        "perfil":       perfil_sel,
+                        "data_geracao": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                        "acumulado":    f"{(m_port['cum'].iloc[-1]-1)*100:+.1f}%",
+                        "retorno_aa":   f"{m_port['ann_ret']*100:.2f}%",
+                        "volatilidade": f"{m_port['ann_vol']*100:.2f}%",
+                        "sharpe":       f"{m_port['sharpe']:.3f}",
+                        "sortino":      f"{m_port['sortino']:.3f}",
+                        "max_dd":       f"{m_port['max_dd']*100:.2f}%",
+                        "calmar":       f"{m_port['calmar']:.3f}",
+                        "acum_cdi":     f"{(cdi_cum.iloc[-1]/100-1)*100:+.1f}%",
+                        "acum_ibov":    f"{(ibov_cum.iloc[-1]/100-1)*100:+.1f}%",
+                        "ret_ibov":     f"{m_ibov['ann_ret']*100:.2f}%",
+                        "vol_ibov":     f"{m_ibov['ann_vol']*100:.2f}%",
+                        "sharpe_ibov":  f"{m_ibov['sharpe']:.3f}",
+                        "dd_ibov":      f"{m_ibov['max_dd']*100:.2f}%",
+                        "calmar_ibov":  f"{m_ibov['calmar']:.3f}",
+                        "rf_pct":       f"{rf_ann*100:.2f}%",
+                        "pesos": [
+                            {"ativo": cfg["name"],
+                             "cluster": cfg["cluster"],
+                             "peso": f"{_pesos_display.get(cfg['name'], cfg['w'])*100:.1f}%",
+                             "vol":  f"{series[cfg['name']]['valor'].pct_change().std()*100*12**0.5:.1f}% a.a."}
+                            for cfg in ASSET_CFG
+                        ],
+                        "metricas": [
+                            {"metrica": "Retorno a.a.",    "hrpbl": f"{m_port['ann_ret']*100:.2f}%",    "cdi": f"{rf_ann*100:.2f}%",             "ibov": f"{m_ibov['ann_ret']*100:.2f}%",   "ipca": f"{ann_ret_ipca6*100:.2f}%"},
+                            {"metrica": "Volatilidade",    "hrpbl": f"{m_port['ann_vol']*100:.2f}%",    "cdi": "~0%",                            "ibov": f"{m_ibov['ann_vol']*100:.2f}%",   "ipca": "baixa"},
+                            {"metrica": "Sharpe",          "hrpbl": f"{m_port['sharpe']:.3f}",          "cdi": "benchmark",                      "ibov": f"{m_ibov['sharpe']:.3f}",         "ipca": "—"},
+                            {"metrica": "Sortino",         "hrpbl": f"{m_port['sortino']:.3f}",         "cdi": "—",                              "ibov": "—",                               "ipca": "—"},
+                            {"metrica": "Max Drawdown",    "hrpbl": f"{m_port['max_dd']*100:.2f}%",     "cdi": "~0%",                            "ibov": f"{m_ibov['max_dd']*100:.2f}%",    "ipca": "—"},
+                            {"metrica": "Calmar Ratio",    "hrpbl": f"{m_port['calmar']:.3f}",          "cdi": "—",                              "ibov": f"{m_ibov['calmar']:.3f}",         "ipca": "—"},
+                            {"metrica": "Acumulado",       "hrpbl": f"{(m_port['cum'].iloc[-1]-1)*100:.1f}%", "cdi": f"{(cdi_cum.iloc[-1]/100-1)*100:.1f}%", "ibov": f"{(ibov_cum.iloc[-1]/100-1)*100:.1f}%", "ipca": f"{(ipca6_cum.iloc[-1]/100-1)*100:.1f}%"},
+                        ],
+                        "eventos": eventos_pdf,
+                    }
+
+                    # ── Gráficos para o PDF ──────────────────────────────
+                    # Gráfico retorno acumulado
+                    fig_ret_pdf = go.Figure()
+                    fig_ret_pdf.add_trace(go.Scatter(
+                        x=port_cum.index, y=port_cum.values,
+                        name=perfil_sel, line=dict(color=cor_perfil, width=2)))
+                    fig_ret_pdf.add_trace(go.Scatter(
+                        x=cdi_cum.index, y=cdi_cum.values,
+                        name="CDI", line=dict(color="#1D9E75", width=1.5, dash="dot")))
+                    fig_ret_pdf.add_trace(go.Scatter(
+                        x=ibov_cum.index, y=ibov_cum.values,
+                        name="Ibovespa", line=dict(color="#BA7517", width=1.5, dash="dash")))
+                    fig_ret_pdf.update_layout(
+                        plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
+                        height=350, margin=dict(l=40,r=20,t=20,b=40),
+                        legend=dict(orientation="h", y=1.02),
+                        yaxis=dict(ticksuffix="%"),
+                    )
+                    dados_pdf["fig_retorno"] = fig_ret_pdf
+
+                    # Gráfico drawdown
+                    dd_port = (port_cum/port_cum.cummax()-1)*100
+                    dd_ibov = (ibov_cum/ibov_cum.cummax()-1)*100
+                    fig_dd_pdf = go.Figure()
+                    fig_dd_pdf.add_trace(go.Scatter(
+                        x=dd_port.index, y=dd_port.values.round(2),
+                        name=perfil_sel, fill="tozeroy",
+                        line=dict(color=cor_perfil, width=1.5)))
+                    fig_dd_pdf.add_trace(go.Scatter(
+                        x=dd_ibov.index, y=dd_ibov.values.round(2),
+                        name="Ibovespa", fill="tozeroy",
+                        line=dict(color="#E24B4A", width=1, dash="dot")))
+                    fig_dd_pdf.update_layout(
+                        plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
+                        height=280, margin=dict(l=40,r=20,t=20,b=40),
+                        yaxis=dict(ticksuffix="%"),
+                    )
+                    dados_pdf["fig_drawdown"] = fig_dd_pdf
+
+                    # ── Janelas Móveis ────────────────────────────────────────
+                    n_jm = 36
+                    def rolling_ret(ret_s, n):
+                        cum = (1+ret_s).cumprod()
+                        res = {}
+                        for i in range(n, len(cum)):
+                            res[cum.index[i]] = (cum.iloc[i]/cum.iloc[i-n]-1)*100
+                        return pd.Series(res)
+
+                    roll_p = rolling_ret(port_ret, n_jm)
+                    roll_c = rolling_ret(cdi_aligned, n_jm)
+                    roll_i = rolling_ret(ibov_ret, n_jm)
+                    roll_ip= rolling_ret(ipca_ret*12/12, n_jm)
+
+                    idx_jm = roll_p.index.intersection(roll_c.index)
+                    exc_p  = (roll_p.reindex(idx_jm) - roll_c.reindex(idx_jm)).dropna()
+
+                    fig_jm_pdf = go.Figure()
+                    fig_jm_pdf.add_trace(go.Scatter(
+                        x=roll_c.index, y=roll_c.values,
+                        name="CDI", fill="tozeroy",
+                        line=dict(color="#1D9E75", width=1, dash="dot"),
+                        fillcolor="rgba(29,158,117,0.08)"))
+                    fig_jm_pdf.add_trace(go.Scatter(
+                        x=roll_p.index, y=roll_p.values,
+                        name=perfil_sel, line=dict(color=cor_perfil, width=2)))
+                    fig_jm_pdf.update_layout(
+                        plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
+                        height=280, margin=dict(l=40,r=20,t=20,b=40),
+                        yaxis=dict(ticksuffix="%"),
+                    )
+
+                    dados_pdf["janelas"] = {
+                        "n_meses": n_jm,
+                        "pct_acima_cdi": (roll_p.reindex(idx_jm) > roll_c.reindex(idx_jm)).mean()*100,
+                        "excesso_mediano": float(exc_p.median()),
+                        "fig": fig_jm_pdf,
+                        "rows": [
+                            {"portfolio": perfil_sel,
+                             "pct_cdi":  f"{(roll_p.reindex(idx_jm)>roll_c.reindex(idx_jm)).mean()*100:.0f}%",
+                             "pct_ipca": f"{(roll_p.reindex(idx_jm)>roll_ip.reindex(idx_jm)).mean()*100:.0f}%",
+                             "mediana":  f"{roll_p.median():+.1f}%",
+                             "melhor":   f"{roll_p.max():+.1f}%",
+                             "pior":     f"{roll_p.min():+.1f}%"},
+                            {"portfolio": "Ibovespa",
+                             "pct_cdi":  f"{(roll_i.reindex(idx_jm)>roll_c.reindex(idx_jm)).mean()*100:.0f}%",
+                             "pct_ipca": f"{(roll_i.reindex(idx_jm)>roll_ip.reindex(idx_jm)).mean()*100:.0f}%",
+                             "mediana":  f"{roll_i.median():+.1f}%",
+                             "melhor":   f"{roll_i.max():+.1f}%",
+                             "pior":     f"{roll_i.min():+.1f}%"},
+                        ]
+                    }
+
+                    # ── Monte Carlo rápido para o PDF ─────────────────────────
+                    np.random.seed(42)
+                    n_sim_pdf, n_meses_pdf = 2000, 60
+                    mu_pdf  = port_ret.mean()
+                    std_pdf = port_ret.std()
+                    sims_pdf = np.ones((n_sim_pdf, n_meses_pdf+1))
+                    for t in range(n_meses_pdf):
+                        r = np.random.normal(mu_pdf, std_pdf, n_sim_pdf)
+                        sims_pdf[:,t+1] = sims_pdf[:,t] * (1+r)
+                    sims_pct = (sims_pdf-1)*100
+
+                    fig_mc_pdf = go.Figure()
+                    meses_pdf = list(range(n_meses_pdf+1))
+                    p10 = np.percentile(sims_pct,10,axis=0)
+                    p50 = np.percentile(sims_pct,50,axis=0)
+                    p90 = np.percentile(sims_pct,90,axis=0)
+                    fig_mc_pdf.add_trace(go.Scatter(
+                        x=meses_pdf+meses_pdf[::-1],
+                        y=list(p90)+list(p10)[::-1],
+                        fill="toself", fillcolor=f"rgba(55,138,221,0.15)",
+                        line=dict(color="rgba(0,0,0,0)"), name="P10-P90"))
+                    fig_mc_pdf.add_trace(go.Scatter(
+                        x=meses_pdf, y=p50,
+                        name=f"{perfil_sel} (P50)",
+                        line=dict(color=cor_perfil, width=2.5)))
+                    fig_mc_pdf.update_layout(
+                        plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
+                        height=300, margin=dict(l=40,r=20,t=20,b=40),
+                        xaxis=dict(tickvals=[0,12,24,36,48,60],
+                                   ticktext=["Hoje","Ano 1","Ano 2","Ano 3","Ano 4","Ano 5"]),
+                        yaxis=dict(ticksuffix="%"),
+                    )
+
+                    mc_rows = []
+                    for h in [12,24,36,60]:
+                        r_h = sims_pct[:,h]
+                        cdi_h = ((1+cdi_aligned.mean())**h-1)*100
+                        mc_rows.append({
+                            "horizonte": f"{h}m ({h//12}a)",
+                            "p10": f"{np.percentile(r_h,10):+.1f}%",
+                            "p50": f"{np.percentile(r_h,50):+.1f}%",
+                            "p90": f"{np.percentile(r_h,90):+.1f}%",
+                            "p_cdi":  f"{(r_h>cdi_h).mean()*100:.0f}%",
+                            "p_dd5":  f"{(r_h<-5).mean()*100:.0f}%",
+                            "p_dd10": f"{(r_h<-10).mean()*100:.0f}%",
+                        })
+                    dados_pdf["monte_carlo"] = {
+                        "n_sim": n_sim_pdf,
+                        "fig":   fig_mc_pdf,
+                        "rows":  mc_rows,
+                    }
+
+                    pdf_buffer = gerar_pdf_gestor(dados_pdf)
+                    st.download_button(
+                        label="⬇️ Baixar PDF — Gestor",
+                        data=pdf_buffer,
+                        file_name=f"relatorio_gestor_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        key="dl_pdf_gestor"
+                    )
+                    st.success("✅ PDF gerado com sucesso!")
+                except Exception as e:
+                    st.error(f"Erro ao gerar PDF: {e}")
+
+    with col_pdf2:
+        st.markdown("**📄 Relatório do Cliente**")
+        st.caption("Versão simplificada — linguagem acessível para o investidor final.")
+        if st.button("Gerar PDF — Cliente", key="btn_pdf_cliente", type="primary"):
+            with st.spinner("Gerando relatório..."):
+                try:
+                    from datetime import datetime
+
+                    dados_pdf_cli = {
+                        "periodo":      f"{common_idx[0].strftime('%b/%Y')} → {common_idx[-1].strftime('%b/%Y')}",
+                        "perfil":       perfil_sel,
+                        "data_geracao": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                        "acumulado":    f"{(m_port['cum'].iloc[-1]-1)*100:+.1f}%",
+                        "retorno_aa":   f"{m_port['ann_ret']*100:.2f}%",
+                        "volatilidade": f"{m_port['ann_vol']*100:.2f}%",
+                        "max_dd":       f"{m_port['max_dd']*100:.2f}%",
+                        "acum_cdi":     f"{(cdi_cum.iloc[-1]/100-1)*100:+.1f}%",
+                        "acum_ibov":    f"{(ibov_cum.iloc[-1]/100-1)*100:+.1f}%",
+                        "vol_ibov":     f"{m_ibov['ann_vol']*100:.2f}%",
+                        "pesos": [
+                            {"ativo": cfg["name"],
+                             "peso":  f"{_pesos_display.get(cfg['name'], cfg['w'])*100:.1f}%"}
+                            for cfg in ASSET_CFG
+                        ],
+                    }
+
+                    pdf_buffer_cli = gerar_pdf_cliente(dados_pdf_cli)
+                    st.download_button(
+                        label="⬇️ Baixar PDF — Cliente",
+                        data=pdf_buffer_cli,
+                        file_name=f"relatorio_cliente_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        key="dl_pdf_cliente"
+                    )
+                    st.success("✅ PDF gerado com sucesso!")
+                except Exception as e:
+                    st.error(f"Erro ao gerar PDF: {e}")
+
 
 # ── Tab 4: Rebalanceamento ────────────────────────────────────────────────────
 with tab4:
