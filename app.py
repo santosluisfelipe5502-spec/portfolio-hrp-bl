@@ -819,6 +819,43 @@ with col_h2:
     </div>
     """, unsafe_allow_html=True)
 
+# ── Alertas de rebalanceamento ────────────────────────────────────────────────
+# Calcula drift atual dos pesos e exibe alerta se algum ativo ultrapassar a banda
+_banda_alerta = st.session_state.get("banda", 3.0)
+_pesos_atuais = {
+    cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}", cfg["w"]*100)
+    for cfg in ASSET_CFG
+}
+_total_atual = sum(_pesos_atuais.values())
+
+# Calcular drift de cada ativo vs target HRP
+_ativos_fora = []
+_ativos_atencao = []
+for cfg in ASSET_CFG:
+    _w_atual = _pesos_atuais[cfg["name"]]
+    _w_target = cfg["w"] * 100
+    _drift = _w_atual - _w_target
+    if abs(_drift) > _banda_alerta:
+        _ativos_fora.append((cfg["name"], _drift, cfg["color"]))
+    elif abs(_drift) > _banda_alerta * 0.7:
+        _ativos_atencao.append((cfg["name"], _drift, cfg["color"]))
+
+if _ativos_fora:
+    _msgs = " · ".join([
+        f"**{n}** {d:+.1f}%" for n, d, _ in _ativos_fora
+    ])
+    st.warning(
+        f"⚠️ **Rebalanceamento necessário** — {len(_ativos_fora)} ativo(s) fora da banda ±{_banda_alerta:.0f}%: {_msgs} · "
+        f"Acesse a aba **🔄 Rebalanceamento** para ver os trades sugeridos."
+    )
+elif _ativos_atencao:
+    _msgs = " · ".join([
+        f"**{n}** {d:+.1f}%" for n, d, _ in _ativos_atencao
+    ])
+    st.info(
+        f"ℹ️ **Atenção** — {len(_ativos_atencao)} ativo(s) se aproximando da banda ±{_banda_alerta:.0f}%: {_msgs}"
+    )
+
 st.divider()
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
