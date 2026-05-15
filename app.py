@@ -436,6 +436,55 @@ def metrics(r, rf_s):
     )
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
+# ── Definição dos perfis de risco ────────────────────────────────────────────
+PERFIS = {
+    "HRP+BL Original": {
+        "vol_min": 0.0, "vol_max": 99.0,
+        "desc": "Pesos originais HRP+BL sem restrição de volatilidade.",
+        "cor": "#378ADD",
+        "bandas": {a["name"]: (0.0, 100.0) for a in ASSET_CFG},
+    },
+    "Conservador": {
+        "vol_min": 1.5, "vol_max": 2.5,
+        "desc": "Vol alvo 1.5%-2.5% a.a. | CDI + 0.5% a 1%",
+        "cor": "#1D9E75",
+        "bandas": {
+            "IRF-M":    (10.0, 25.0),
+            "IMA":      (5.0,  15.0),
+            "IHFA":     (5.0,  15.0),
+            "IDA-DI":   (35.0, 55.0),
+            "Ibovespa": (0.0,  5.0),
+            "Internac.":(0.0,  5.0),
+        },
+    },
+    "Moderado": {
+        "vol_min": 3.0, "vol_max": 4.5,
+        "desc": "Vol alvo 3%-4.5% a.a. | CDI + 1% a 2%",
+        "cor": "#C4770A",
+        "bandas": {
+            "IRF-M":    (15.0, 35.0),
+            "IMA":      (10.0, 25.0),
+            "IHFA":     (10.0, 25.0),
+            "IDA-DI":   (10.0, 25.0),
+            "Ibovespa": (5.0,  20.0),
+            "Internac.":(3.0,  12.0),
+        },
+    },
+    "Agressivo": {
+        "vol_min": 5.0, "vol_max": 8.0,
+        "desc": "Vol alvo 5%-8% a.a. | CDI + 2% a 4%",
+        "cor": "#E24B4A",
+        "bandas": {
+            "IRF-M":    (5.0,  20.0),
+            "IMA":      (5.0,  20.0),
+            "IHFA":     (10.0, 25.0),
+            "IDA-DI":   (0.0,  15.0),
+            "Ibovespa": (15.0, 35.0),
+            "Internac.":(8.0,  25.0),
+        },
+    },
+}
+
 with st.sidebar:
     st.markdown("### 📊 HRP + Black-Litterman")
     st.markdown('<span class="badge badge-blue">Fase 5 — Dashboard</span>', unsafe_allow_html=True)
@@ -449,55 +498,6 @@ with st.sidebar:
         index=0,
         help="Define a restrição de volatilidade e as bandas de peso por ativo."
     )
-
-    # Definição dos perfis
-    PERFIS = {
-        "HRP+BL Original": {
-            "vol_min": 0.0, "vol_max": 99.0,
-            "desc": "Pesos originais HRP+BL sem restrição de volatilidade.",
-            "cor": "#378ADD",
-            "bandas": {a["name"]: (0.0, 100.0) for a in ASSET_CFG},
-        },
-        "Conservador": {
-            "vol_min": 1.5, "vol_max": 2.5,
-            "desc": "Vol alvo 1.5%-2.5% a.a. | CDI + 0.5% a 1%",
-            "cor": "#1D9E75",
-            "bandas": {
-                "IRF-M":    (10.0, 25.0),
-                "IMA":      (5.0,  15.0),
-                "IHFA":     (5.0,  15.0),
-                "IDA-DI":   (35.0, 55.0),
-                "Ibovespa": (0.0,  5.0),
-                "Internac.":(0.0,  5.0),
-            },
-        },
-        "Moderado": {
-            "vol_min": 3.0, "vol_max": 4.5,
-            "desc": "Vol alvo 3%-4.5% a.a. | CDI + 1% a 2%",
-            "cor": "#C4770A",
-            "bandas": {
-                "IRF-M":    (15.0, 35.0),
-                "IMA":      (10.0, 25.0),
-                "IHFA":     (10.0, 25.0),
-                "IDA-DI":   (10.0, 25.0),
-                "Ibovespa": (5.0,  20.0),
-                "Internac.":(3.0,  12.0),
-            },
-        },
-        "Agressivo": {
-            "vol_min": 5.0, "vol_max": 8.0,
-            "desc": "Vol alvo 5%-8% a.a. | CDI + 2% a 4%",
-            "cor": "#E24B4A",
-            "bandas": {
-                "IRF-M":    (5.0,  20.0),
-                "IMA":      (5.0,  20.0),
-                "IHFA":     (10.0, 25.0),
-                "IDA-DI":   (0.0,  15.0),
-                "Ibovespa": (15.0, 35.0),
-                "Internac.":(8.0,  25.0),
-            },
-        },
-    }
 
     perfil_cfg = PERFIS[perfil_sel]
     cor_perfil = perfil_cfg["cor"]
@@ -876,9 +876,11 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
                 total_w = sum(pesos_perfil.values())
                 pesos_perfil = {k: v/total_w for k, v in pesos_perfil.items()}
 
-        except Exception:
+        except Exception as e_perfil:
             # Fallback: usar pesos padrão HRP
             pesos_perfil = {a["name"]: a["w"] for a in ASSET_CFG}
+            st.warning(f"⚠️ Erro ao calcular pesos do perfil {perfil_sel}: {e_perfil}. "
+                       f"Usando pesos HRP+BL original.")
 
     # Calcular retorno do portfólio com pesos do perfil
     port_ret_perfil = sum(
