@@ -1853,6 +1853,80 @@ with tab4:
 
     st.divider()
 
+    # ── Comparativo de pesos: HRP Original vs Perfil selecionado ─────────────
+    st.markdown("<div class='section-title'>pesos por ativo — HRP+BL original vs perfil ativo</div>",
+                unsafe_allow_html=True)
+
+    rows_pesos = []
+    for cfg in ASSET_CFG:
+        w_orig   = cfg["w"] * 100
+        w_perfil = _pesos_display.get(cfg["name"], cfg["w"]) * 100
+        delta    = w_perfil - w_orig
+        rows_pesos.append({
+            "Ativo":          cfg["name"],
+            "Cluster":        cfg["cluster"],
+            "HRP+BL original":f"{w_orig:.1f}%",
+            f"Perfil {perfil_sel}": f"{w_perfil:.1f}%",
+            "Δ":              f"{delta:+.1f}%",
+            "Direção":        "⬆️ Aumentou" if delta > 0.5 else
+                              "⬇️ Reduziu"  if delta < -0.5 else
+                              "✅ Manteve",
+        })
+    df_pesos = pd.DataFrame(rows_pesos).set_index("Ativo")
+    st.dataframe(df_pesos, use_container_width=True)
+
+    if perfil_sel != "HRP+BL Original":
+        # Gráfico comparativo de pesos
+        fig_pesos_comp = go.Figure()
+        nomes_p = [cfg["name"] for cfg in ASSET_CFG]
+        fig_pesos_comp.add_trace(go.Bar(
+            x=nomes_p,
+            y=[cfg["w"]*100 for cfg in ASSET_CFG],
+            name="HRP+BL original",
+            marker_color="rgba(55,138,221,0.7)",
+        ))
+        fig_pesos_comp.add_trace(go.Bar(
+            x=nomes_p,
+            y=[_pesos_display.get(cfg["name"], cfg["w"])*100 for cfg in ASSET_CFG],
+            name=f"Perfil {perfil_sel}",
+            marker_color=cor_perfil,
+        ))
+        fig_pesos_comp.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+            height=250, barmode="group",
+            font=dict(color="#1a1a18"),
+            margin=dict(l=0,r=0,t=8,b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="left", x=0, font=dict(color="#1a1a18")),
+            xaxis=dict(gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441",size=11), color="#1a1a18"),
+            yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441",size=11), color="#1a1a18"),
+        )
+        st.plotly_chart(fig_pesos_comp, use_container_width=True)
+
+        # Vol calculada do perfil
+        try:
+            ret_dict_v = {}
+            for cfg in ASSET_CFG:
+                r = series[cfg["name"]]["valor"].pct_change().dropna()
+                r = r.reindex(common_idx).ffill().dropna()
+                ret_dict_v[cfg["name"]] = r
+            ret_df_v  = pd.DataFrame(ret_dict_v).dropna()
+            w_v = np.array([float(_pesos_display.get(a["name"], a["w"]))
+                            for a in ASSET_CFG])
+            cov_v = ret_df_v.cov().values.copy()
+            vol_v = float(np.sqrt(w_v @ cov_v @ w_v) * np.sqrt(12) * 100)
+            st.info(
+                f"📊 Volatilidade calculada do perfil **{perfil_sel}**: "
+                f"**{vol_v:.2f}% a.a.** "
+                f"(alvo: {perfil_cfg['vol_min']:.1f}% – {perfil_cfg['vol_max']:.1f}%)"
+            )
+        except Exception:
+            pass
+
+    st.divider()
+
     st.markdown(
         "<div style='font-size:12px;color:#888780;margin-bottom:.75rem'>"
         "💡 Digite o percentual de cada ativo (ex: 26.8). Os pesos devem somar 100%."
@@ -3646,7 +3720,11 @@ with tab11:
                 ret_df_mc = pd.DataFrame(ret_dict_mc).dropna()
 
                 # ── Pesos a simular ───────────────────────────────────────────
-                w_hrp_mc = np.array([WEIGHTS.get(a["name"],0) for a in ASSET_CFG])
+                # Usar pesos do perfil selecionado (não sempre o HRP original)
+                w_hrp_mc = np.array([
+                    float(WEIGHTS_ATIVO.get(a["name"], WEIGHTS.get(a["name"],0)))
+                    for a in ASSET_CFG
+                ])
                 ativos_mc = [a["name"] for a in ASSET_CFG]
 
                 if usar_bl_mc:
@@ -3781,8 +3859,8 @@ with tab11:
                 # Mediana HRP
                 fig_mc.add_trace(go.Scatter(
                     x=meses_eixo, y=pp_hrp["p50"],
-                    name="HRP+BL (mediana)",
-                    line=dict(color="#378ADD", width=2.5),
+                    name=f"{perfil_sel} (mediana)",
+                    line=dict(color=cor_perfil, width=2.5),
                 ))
 
                 # BL Dinâmico se disponível
