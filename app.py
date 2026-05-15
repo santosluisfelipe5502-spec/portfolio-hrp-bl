@@ -822,38 +822,49 @@ with col_h2:
 # ── Alertas de rebalanceamento ────────────────────────────────────────────────
 # Calcula drift atual dos pesos e exibe alerta se algum ativo ultrapassar a banda
 _banda_alerta = st.session_state.get("banda", 3.0)
-_pesos_atuais = {
-    cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}", cfg["w"]*100)
-    for cfg in ASSET_CFG
-}
+# Ler pesos atuais — verificar todas as chaves possíveis do session_state
+_pesos_atuais = {}
+for cfg in ASSET_CFG:
+    chave = f"rebal_{cfg['name']}"
+    # Tentar ler do session_state, fallback para o peso target
+    val = st.session_state.get(chave, None)
+    if val is None:
+        val = cfg["w"] * 100
+    _pesos_atuais[cfg["name"]] = float(val)
+
 _total_atual = sum(_pesos_atuais.values())
 
-# Calcular drift de cada ativo vs target HRP
+# Calcular drift apenas se os pesos foram customizados (total != 100 ou algum diferente)
+_pesos_sao_default = all(
+    abs(_pesos_atuais[cfg["name"]] - cfg["w"]*100) < 0.05
+    for cfg in ASSET_CFG
+)
+
 _ativos_fora = []
 _ativos_atencao = []
-for cfg in ASSET_CFG:
-    _w_atual = _pesos_atuais[cfg["name"]]
-    _w_target = cfg["w"] * 100
-    _drift = _w_atual - _w_target
-    if abs(_drift) > _banda_alerta:
-        _ativos_fora.append((cfg["name"], _drift, cfg["color"]))
-    elif abs(_drift) > _banda_alerta * 0.7:
-        _ativos_atencao.append((cfg["name"], _drift, cfg["color"]))
+
+if not _pesos_sao_default:
+    for cfg in ASSET_CFG:
+        _w_atual  = _pesos_atuais[cfg["name"]]
+        _w_target = cfg["w"] * 100
+        _drift    = _w_atual - _w_target
+        if abs(_drift) > _banda_alerta:
+            _ativos_fora.append((cfg["name"], _drift, cfg["color"]))
+        elif abs(_drift) > _banda_alerta * 0.7:
+            _ativos_atencao.append((cfg["name"], _drift, cfg["color"]))
 
 if _ativos_fora:
-    _msgs = " · ".join([
-        f"**{n}** {d:+.1f}%" for n, d, _ in _ativos_fora
-    ])
+    _msgs = " · ".join([f"**{n}** {d:+.1f}%" for n, d, _ in _ativos_fora])
     st.warning(
-        f"⚠️ **Rebalanceamento necessário** — {len(_ativos_fora)} ativo(s) fora da banda ±{_banda_alerta:.0f}%: {_msgs} · "
+        f"⚠️ **Rebalanceamento necessário** — {len(_ativos_fora)} ativo(s) "
+        f"fora da banda ±{_banda_alerta:.0f}%: {_msgs} · "
         f"Acesse a aba **🔄 Rebalanceamento** para ver os trades sugeridos."
     )
 elif _ativos_atencao:
-    _msgs = " · ".join([
-        f"**{n}** {d:+.1f}%" for n, d, _ in _ativos_atencao
-    ])
+    _msgs = " · ".join([f"**{n}** {d:+.1f}%" for n, d, _ in _ativos_atencao])
     st.info(
-        f"ℹ️ **Atenção** — {len(_ativos_atencao)} ativo(s) se aproximando da banda ±{_banda_alerta:.0f}%: {_msgs}"
+        f"ℹ️ **Atenção** — {len(_ativos_atencao)} ativo(s) "
+        f"se aproximando da banda ±{_banda_alerta:.0f}%: {_msgs}"
     )
 
 st.divider()
@@ -1570,7 +1581,7 @@ with tab4:
             format_func=lambda x: f"{x} meses ({x//12} anos)",
             key="janela_hrp"
         )
-        rodar_hrp = col_hrp2.button("▶ Calcular novos pesos HRP", key="btn_hrp")
+        rodar_hrp = col_hrp2.button("▶ Calcular novos pesos HRP", key="btn_hrp", type="primary")
 
         if rodar_hrp:
             with st.spinner(f"Calculando HRP com os últimos {janela_hrp} meses..."):
@@ -2186,7 +2197,7 @@ with tab5:
         min_value=0.0, max_value=1.0, value=0.5, step=0.05,
         help="0 = ignora o cenário (mantém HRP puro) | 1 = segue totalmente o cenário"
     )
-    rodar_bl = col_bl2.button("▶ Calcular pesos BL para este cenário", key="btn_bl_dyn")
+    rodar_bl = col_bl2.button("▶ Calcular pesos BL para este cenário", key="btn_bl_dyn", type="primary")
 
     if rodar_bl:
         with st.spinner("Calculando Black-Litterman dinâmico..."):
@@ -3422,6 +3433,20 @@ with tab11:
     else:
         st.info("📊 Usando retornos históricos (média 2009-2026) como mu das simulações.")
 
+    st.markdown("""
+    <style>
+    div[data-testid="stButton"] button {
+        background:#378ADD !important;
+        color:#ffffff !important;
+        border:none !important;
+        font-weight:500 !important;
+    }
+    div[data-testid="stButton"] button:hover {
+        background:#185FA5 !important;
+        color:#ffffff !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     rodar_mc = st.button("▶ Rodar simulação Monte Carlo", key="btn_mc")
 
     if rodar_mc:
