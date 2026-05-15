@@ -990,7 +990,7 @@ def hex_to_rgba(hex_color, alpha=0.5):
     return hex_color
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
-tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
     "📖 Guia",
     "📈 Retorno acumulado",
     "📉 Drawdown",
@@ -1003,6 +1003,7 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.ta
     "📡 Monitoramento diário",
     "📐 Janelas móveis",
     "🎲 Monte Carlo",
+    "📊 Atribuição de retorno",
 ])
 
 # ── Tab 0: Guia ──────────────────────────────────────────────────────────────
@@ -3754,6 +3755,234 @@ with tab11:
             "HRP+BL original vs pesos otimizados pelo cenário macro."
             "</div>", unsafe_allow_html=True
         )
+
+
+
+# ── Tab 12: Atribuição de retorno ─────────────────────────────────────────────
+with tab12:
+    st.markdown(
+        "Decomposição do retorno mensal do portfólio HRP+BL por ativo — "
+        "mostra quanto cada ativo contribuiu para o resultado em cada período."
+    )
+
+    # ── Controles ──────────────────────────────────────────────────────────────
+    col_at1, col_at2 = st.columns(2)
+    periodos_at2 = {
+        "12 meses": 12, "24 meses": 24, "36 meses": 36,
+        "5 anos": 60, "Histórico completo": None,
+    }
+    periodo_at2 = col_at1.selectbox("Período", list(periodos_at2.keys()),
+                                     index=4, key="periodo_atrib")
+    tipo_viz = col_at2.selectbox("Visualização",
+                                  ["Contribuição mensal empilhada",
+                                   "Contribuição acumulada",
+                                   "Heatmap mensal"],
+                                  key="tipo_atrib")
+
+    # Filtrar período
+    n_at2 = periodos_at2[periodo_at2]
+    if n_at2:
+        idx_at2 = common_idx[-n_at2:]
+    else:
+        idx_at2 = common_idx
+
+    # ── Calcular contribuição de cada ativo ───────────────────────────────────
+    contrib_dict = {}
+    for cfg in ASSET_CFG:
+        ret_a = (series[cfg["name"]]["valor"]
+                 .pct_change().dropna()
+                 .reindex(idx_at2).ffill().fillna(0))
+        contrib_dict[cfg["name"]] = ret_a * cfg["w"] * 100  # contribuição em %
+
+    df_contrib = pd.DataFrame(contrib_dict)
+    df_contrib.index = pd.to_datetime(df_contrib.index)
+    df_contrib["Total"] = df_contrib.sum(axis=1)
+
+    # ── Gráfico principal ─────────────────────────────────────────────────────
+    cores_ativos = {cfg["name"]: cfg["color"] for cfg in ASSET_CFG}
+
+    if tipo_viz == "Contribuição mensal empilhada":
+        st.markdown("<div class='section-title'>contribuição mensal por ativo (%)</div>",
+                    unsafe_allow_html=True)
+
+        fig_atrib = go.Figure()
+        for cfg in ASSET_CFG:
+            fig_atrib.add_trace(go.Bar(
+                x=df_contrib.index,
+                y=df_contrib[cfg["name"]].round(3),
+                name=cfg["name"],
+                marker_color=cfg["color"],
+                hovertemplate=f"<b>{cfg['name']}</b><br>%{{x|%b/%Y}}<br>"
+                              f"Contribuição: %{{y:.3f}}%<extra></extra>",
+            ))
+        # Linha do total
+        fig_atrib.add_trace(go.Scatter(
+            x=df_contrib.index,
+            y=df_contrib["Total"].round(3),
+            name="Total portfólio",
+            line=dict(color="#1a1a18", width=2),
+            hovertemplate="<b>Total</b><br>%{x|%b/%Y}<br>%{y:.3f}%<extra></extra>",
+        ))
+        fig_atrib.add_hline(y=0, line_color="#888780", line_width=1)
+        fig_atrib.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+            height=400, barmode="relative", hovermode="x unified",
+            font=dict(color="#1a1a18"),
+            margin=dict(l=0,r=0,t=8,b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="left", x=0, font=dict(color="#1a1a18")),
+            xaxis=dict(gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441", size=10), color="#1a1a18"),
+            yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441", size=11), color="#1a1a18",
+                       zeroline=True, zerolinecolor="#888780",
+                       title="Contribuição mensal (%)"),
+        )
+        st.plotly_chart(fig_atrib, use_container_width=True)
+
+    elif tipo_viz == "Contribuição acumulada":
+        st.markdown("<div class='section-title'>contribuição acumulada por ativo (%)</div>",
+                    unsafe_allow_html=True)
+
+        df_acum = df_contrib[list(cores_ativos.keys())].cumsum()
+
+        fig_acum = go.Figure()
+        for cfg in ASSET_CFG:
+            fig_acum.add_trace(go.Scatter(
+                x=df_acum.index,
+                y=df_acum[cfg["name"]].round(2),
+                name=cfg["name"],
+                fill="tonexty" if cfg != ASSET_CFG[0] else "tozeroy",
+                line=dict(color=cfg["color"], width=1),
+                fillcolor=cfg["color"] + "40",
+                hovertemplate=f"<b>{cfg['name']}</b><br>%{{x|%b/%Y}}<br>"
+                              f"Contrib. acum.: %{{y:.2f}}%<extra></extra>",
+            ))
+        fig_acum.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+            height=400, hovermode="x unified",
+            font=dict(color="#1a1a18"),
+            margin=dict(l=0,r=0,t=8,b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="left", x=0, font=dict(color="#1a1a18")),
+            xaxis=dict(gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441", size=10), color="#1a1a18"),
+            yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441", size=11), color="#1a1a18",
+                       title="Contribuição acumulada (%)"),
+        )
+        st.plotly_chart(fig_acum, use_container_width=True)
+
+    else:  # Heatmap mensal
+        st.markdown("<div class='section-title'>heatmap de contribuição mensal por ativo</div>",
+                    unsafe_allow_html=True)
+
+        # Preparar dados para heatmap
+        df_heat = df_contrib[list(cores_ativos.keys())].copy()
+        df_heat.index = df_heat.index.strftime("%b/%Y")
+
+        # Limitar a 36 meses para legibilidade
+        df_heat = df_heat.tail(min(36, len(df_heat)))
+
+        fig_heat = go.Figure(go.Heatmap(
+            z=df_heat.values.T,
+            x=df_heat.index.tolist(),
+            y=list(cores_ativos.keys()),
+            colorscale=[
+                [0.0, "#A32D2D"],
+                [0.4, "#FCEBEB"],
+                [0.5, "#f8f7f4"],
+                [0.6, "#EAF3DE"],
+                [1.0, "#0F6E56"],
+            ],
+            zmid=0,
+            hovertemplate="<b>%{y}</b><br>%{x}<br>Contribuição: %{z:.3f}%<extra></extra>",
+            colorbar=dict(
+                title="Contrib. (%)",
+                tickfont=dict(color="#444441"),
+                titlefont=dict(color="#444441"),
+            ),
+        ))
+        fig_heat.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+            height=320,
+            font=dict(color="#1a1a18"),
+            margin=dict(l=0,r=0,t=8,b=0),
+            xaxis=dict(tickfont=dict(color="#444441", size=9), color="#1a1a18",
+                       tickangle=-45),
+            yaxis=dict(tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+        )
+        st.plotly_chart(fig_heat, use_container_width=True)
+        st.caption("Verde = contribuição positiva | Vermelho = contribuição negativa | "
+                   "Limitado aos últimos 36 meses para legibilidade.")
+
+    st.divider()
+
+    # ── Tabela de contribuição média por ativo ────────────────────────────────
+    st.markdown("<div class='section-title'>contribuição média e total por ativo no período</div>",
+                unsafe_allow_html=True)
+
+    rows_contrib = []
+    for cfg in ASSET_CFG:
+        c = df_contrib[cfg["name"]]
+        rows_contrib.append({
+            "Ativo":             cfg["name"],
+            "Cluster":           cfg["cluster"],
+            "Peso HRP+BL":       f"{cfg['w']*100:.1f}%",
+            "Contrib. média/mês":f"{c.mean():+.4f}%",
+            "Contrib. total":    f"{c.sum():+.2f}%",
+            "Meses positivos":   f"{(c>0).sum()} ({(c>0).mean()*100:.0f}%)",
+            "Meses negativos":   f"{(c<0).sum()} ({(c<0).mean()*100:.0f}%)",
+            "Maior contrib.":    f"{c.max():+.3f}%",
+            "Menor contrib.":    f"{c.min():+.3f}%",
+        })
+
+    # Linha de total
+    total_c = df_contrib["Total"]
+    rows_contrib.append({
+        "Ativo":             "TOTAL",
+        "Cluster":           "—",
+        "Peso HRP+BL":       "100%",
+        "Contrib. média/mês":f"{total_c.mean():+.4f}%",
+        "Contrib. total":    f"{total_c.sum():+.2f}%",
+        "Meses positivos":   f"{(total_c>0).sum()} ({(total_c>0).mean()*100:.0f}%)",
+        "Meses negativos":   f"{(total_c<0).sum()} ({(total_c<0).mean()*100:.0f}%)",
+        "Maior contrib.":    f"{total_c.max():+.3f}%",
+        "Menor contrib.":    f"{total_c.min():+.3f}%",
+    })
+
+    df_tbl_contrib = pd.DataFrame(rows_contrib).set_index("Ativo")
+    st.dataframe(df_tbl_contrib, use_container_width=True)
+
+    st.divider()
+
+    # ── Insight: qual ativo mais contribuiu ───────────────────────────────────
+    contribuicoes_totais = {
+        cfg["name"]: df_contrib[cfg["name"]].sum()
+        for cfg in ASSET_CFG
+    }
+    maior_contrib = max(contribuicoes_totais, key=contribuicoes_totais.get)
+    menor_contrib = min(contribuicoes_totais, key=contribuicoes_totais.get)
+    cor_maior = cores_ativos[maior_contrib]
+    cor_menor = cores_ativos[menor_contrib]
+
+    col_ins1, col_ins2 = st.columns(2)
+    col_ins1.markdown(
+        f"<div class='metric-card' style='border-top:3px solid {cor_maior}'>"
+        f"<div class='metric-label'>Maior contribuidor no período</div>"
+        f"<div class='metric-value pos' style='font-size:22px'>{maior_contrib}</div>"
+        f"<div class='metric-sub'>Contribuição total: "
+        f"{contribuicoes_totais[maior_contrib]:+.2f}%</div>"
+        f"</div>", unsafe_allow_html=True
+    )
+    col_ins2.markdown(
+        f"<div class='metric-card' style='border-top:3px solid {cor_menor}'>"
+        f"<div class='metric-label'>Menor contribuidor no período</div>"
+        f"<div class='metric-value warn' style='font-size:22px'>{menor_contrib}</div>"
+        f"<div class='metric-sub'>Contribuição total: "
+        f"{contribuicoes_totais[menor_contrib]:+.2f}%</div>"
+        f"</div>", unsafe_allow_html=True
+    )
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
