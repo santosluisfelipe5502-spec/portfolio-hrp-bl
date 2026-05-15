@@ -3848,13 +3848,17 @@ with tab12:
 
         fig_acum = go.Figure()
         for cfg in ASSET_CFG:
+            # Converter hex para rgba para compatibilidade com Plotly
+            h = cfg["color"].lstrip("#")
+            r,g,b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+            fill_rgba = f"rgba({r},{g},{b},0.35)"
             fig_acum.add_trace(go.Scatter(
                 x=df_acum.index,
                 y=df_acum[cfg["name"]].round(2),
                 name=cfg["name"],
                 fill="tonexty" if cfg != ASSET_CFG[0] else "tozeroy",
                 line=dict(color=cfg["color"], width=1),
-                fillcolor=cfg["color"] + "40",
+                fillcolor=fill_rgba,
                 hovertemplate=f"<b>{cfg['name']}</b><br>%{{x|%b/%Y}}<br>"
                               f"Contrib. acum.: %{{y:.2f}}%<extra></extra>",
             ))
@@ -3900,7 +3904,6 @@ with tab12:
             colorbar=dict(
                 title="Contrib. (%)",
                 tickfont=dict(color="#444441"),
-                titlefont=dict(color="#444441"),
             ),
         ))
         fig_heat.update_layout(
