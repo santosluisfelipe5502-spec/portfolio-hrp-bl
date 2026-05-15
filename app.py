@@ -1159,9 +1159,64 @@ def hex_to_rgba(hex_color, alpha=0.5):
 
 # ── Funções de geração de PDF ────────────────────────────────────────────────
 def fig_to_image(fig, width=700, height=350):
-    """Converte figura Plotly para bytes PNG. Retorna None se kaleido não disponível."""
+    """Converte figura Plotly para bytes PNG usando matplotlib como fallback."""
+    # Tentativa 1: kaleido (requer Chrome)
     try:
-        return fig.to_image(format="png", width=width, height=height, scale=2)
+        img = fig.to_image(format="png", width=width, height=height, scale=2)
+        if img:
+            return img
+    except Exception:
+        pass
+
+    # Tentativa 2: matplotlib como fallback (sempre disponível)
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
+
+        fig_mpl, ax = plt.subplots(figsize=(width/100, height/100), dpi=100)
+        ax.set_facecolor("#f8f7f4")
+        fig_mpl.patch.set_facecolor("#f8f7f4")
+
+        colors_cycle = ["#378ADD","#1D9E75","#E24B4A","#BA7517","#7F77DD","#888780","#C4770A"]
+
+        for i, trace in enumerate(fig.data):
+            cor = colors_cycle[i % len(colors_cycle)]
+            x = list(trace.x) if hasattr(trace, "x") and trace.x is not None else []
+            y = list(trace.y) if hasattr(trace, "y") and trace.y is not None else []
+
+            if not x or not y:
+                continue
+
+            name = trace.name if hasattr(trace, "name") else f"Série {i+1}"
+            lw   = 2.0 if i == 0 else 1.2
+            ls   = "-" if i == 0 else ("--" if i == 1 else ":")
+
+            # Detectar tipo de trace
+            trace_type = type(trace).__name__.lower()
+            if "bar" in trace_type:
+                ax.bar(range(len(y)), y, label=name, color=cor, alpha=0.75, width=0.35)
+            elif hasattr(trace, "fill") and trace.fill in ("tozeroy","tonexty","toself"):
+                ax.fill_between(range(len(y)), y, alpha=0.20, color=cor)
+                ax.plot(range(len(y)), y, color=cor, linewidth=lw, linestyle=ls, label=name)
+            else:
+                ax.plot(range(len(y)), y, color=cor, linewidth=lw, linestyle=ls, label=name)
+
+        ax.axhline(0, color="#888780", linewidth=0.8, linestyle="-")
+        ax.set_xlabel("")
+        ax.set_ylabel("%")
+        ax.legend(fontsize=7, loc="upper left")
+        ax.grid(True, alpha=0.3, color="#e8e6e0")
+        ax.spines[["top","right"]].set_visible(False)
+        plt.tight_layout(pad=0.5)
+
+        buf = io.BytesIO()
+        fig_mpl.savefig(buf, format="png", dpi=120, bbox_inches="tight",
+                        facecolor="#f8f7f4")
+        plt.close(fig_mpl)
+        buf.seek(0)
+        return buf.read()
     except Exception:
         return None
 
@@ -1171,7 +1226,9 @@ def fig_to_reportlab(fig, width=700, height=350):
         from reportlab.platypus import Image as RLImage
         img_bytes = fig_to_image(fig, width, height)
         if img_bytes:
-            return RLImage(io.BytesIO(img_bytes), width=16*cm, height=8*cm)
+            rl_w = 16*cm
+            rl_h = rl_w * height / width
+            return RLImage(io.BytesIO(img_bytes), width=rl_w, height=rl_h)
     except Exception:
         pass
     return None
@@ -4373,6 +4430,28 @@ with tab11:
     div[data-testid="stButton"] button:hover {
         background:#185FA5 !important;
         color:#ffffff !important;
+    }
+    /* Botões de download */
+    div[data-testid="stDownloadButton"] button {
+        background: #378ADD !important;
+        color: #ffffff !important;
+        border: none !important;
+        font-weight: 500 !important;
+        width: 100% !important;
+    }
+    div[data-testid="stDownloadButton"] button:hover {
+        background: #185FA5 !important;
+        color: #ffffff !important;
+    }
+    /* Botões primários */
+    div[data-testid="stButton"] button[kind="primary"] {
+        background: #378ADD !important;
+        color: #ffffff !important;
+        border: none !important;
+    }
+    div[data-testid="stButton"] button[kind="primary"]:hover {
+        background: #185FA5 !important;
+        color: #ffffff !important;
     }
     </style>
     """, unsafe_allow_html=True)
