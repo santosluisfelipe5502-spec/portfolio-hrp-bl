@@ -441,6 +441,76 @@ with st.sidebar:
     st.markdown('<span class="badge badge-blue">Fase 5 — Dashboard</span>', unsafe_allow_html=True)
     st.divider()
 
+    # ── Perfil de risco ───────────────────────────────────────────────────────
+    st.markdown("#### 🎯 Perfil de risco")
+    perfil_sel = st.selectbox(
+        "Selecione o perfil",
+        ["HRP+BL Original", "Conservador", "Moderado", "Agressivo"],
+        index=0,
+        help="Define a restrição de volatilidade e as bandas de peso por ativo."
+    )
+
+    # Definição dos perfis
+    PERFIS = {
+        "HRP+BL Original": {
+            "vol_min": 0.0, "vol_max": 99.0,
+            "desc": "Pesos originais HRP+BL sem restrição de volatilidade.",
+            "cor": "#378ADD",
+            "bandas": {a["name"]: (0.0, 100.0) for a in ASSET_CFG},
+        },
+        "Conservador": {
+            "vol_min": 1.5, "vol_max": 2.5,
+            "desc": "Vol alvo 1.5%-2.5% a.a. | CDI + 0.5% a 1%",
+            "cor": "#1D9E75",
+            "bandas": {
+                "IRF-M":    (10.0, 25.0),
+                "IMA":      (5.0,  15.0),
+                "IHFA":     (5.0,  15.0),
+                "IDA-DI":   (35.0, 55.0),
+                "Ibovespa": (0.0,  5.0),
+                "Internac.":(0.0,  5.0),
+            },
+        },
+        "Moderado": {
+            "vol_min": 3.0, "vol_max": 4.5,
+            "desc": "Vol alvo 3%-4.5% a.a. | CDI + 1% a 2%",
+            "cor": "#C4770A",
+            "bandas": {
+                "IRF-M":    (15.0, 35.0),
+                "IMA":      (10.0, 25.0),
+                "IHFA":     (10.0, 25.0),
+                "IDA-DI":   (10.0, 25.0),
+                "Ibovespa": (5.0,  20.0),
+                "Internac.":(3.0,  12.0),
+            },
+        },
+        "Agressivo": {
+            "vol_min": 5.0, "vol_max": 8.0,
+            "desc": "Vol alvo 5%-8% a.a. | CDI + 2% a 4%",
+            "cor": "#E24B4A",
+            "bandas": {
+                "IRF-M":    (5.0,  20.0),
+                "IMA":      (5.0,  20.0),
+                "IHFA":     (10.0, 25.0),
+                "IDA-DI":   (0.0,  15.0),
+                "Ibovespa": (15.0, 35.0),
+                "Internac.":(8.0,  25.0),
+            },
+        },
+    }
+
+    perfil_cfg = PERFIS[perfil_sel]
+    cor_perfil = perfil_cfg["cor"]
+
+    st.markdown(
+        f"<div style='font-size:12px;padding:6px 10px;border-radius:6px;"
+        f"background:{cor_perfil}22;border-left:3px solid {cor_perfil};"
+        f"color:{cor_perfil};margin-top:4px'>"
+        f"{perfil_cfg['desc']}</div>",
+        unsafe_allow_html=True
+    )
+    st.divider()
+
     st.markdown("#### CDI (taxa livre de risco)")
     use_auto_cdi = st.toggle("Buscar CDI automaticamente (BCB)", value=True)
     cdi_file = None
@@ -756,6 +826,77 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     port_ret, cdi_aligned, common_idx = align_and_compute(series, cdi_raw, str(start_ts)[:10], str(end_ts)[:10])
     ibov_ret = series["Ibovespa"]["valor"].pct_change().dropna().reindex(common_idx).ffill()
 
+    # ── Calcular pesos do perfil selecionado ──────────────────────────────────
+    if perfil_sel == "HRP+BL Original":
+        pesos_perfil = {a["name"]: a["w"] for a in ASSET_CFG}
+    else:
+        # Rodar HRP com restrições de banda do perfil
+        try:
+            ret_dict_perfil = {}
+            for cfg in ASSET_CFG:
+                r = series[cfg["name"]]["valor"].pct_change().dropna()
+                r = r.reindex(common_idx).ffill().dropna()
+                ret_dict_perfil[cfg["name"]] = r
+            ret_df_perfil = pd.DataFrame(ret_dict_perfil).dropna()
+
+            # HRP irrestrito como ponto de partida
+            w_hrp_raw = compute_hrp(ret_df_perfil)
+
+            # Aplicar restrições de banda do perfil
+            bandas = perfil_cfg["bandas"]
+            w_clip = {}
+            for a in ASSET_CFG:
+                nome = a["name"]
+                w_min, w_max = bandas.get(nome, (0.0, 100.0))
+                w_clip[nome] = float(np.clip(w_hrp_raw.get(nome, a["w"]),
+                                              w_min/100, w_max/100))
+
+            # Renormalizar para somar 1
+            total_w = sum(w_clip.values())
+            pesos_perfil = {k: v/total_w for k, v in w_clip.items()}
+
+            # Verificar restrição de volatilidade
+            ret_arr = ret_df_perfil.values
+            w_arr   = np.array([pesos_perfil[a["name"]] for a in ASSET_CFG])
+            cov_p   = ret_df_perfil.cov().values
+            vol_perfil_calc = float(np.sqrt(w_arr @ cov_p @ w_arr) * np.sqrt(12) * 100)
+
+            # Se volatilidade fora da banda, ajustar via scaling
+            vol_min_p = perfil_cfg["vol_min"]
+            vol_max_p = perfil_cfg["vol_max"]
+            if vol_perfil_calc > vol_max_p:
+                # Reduzir pesos de equity, aumentar IDA-DI
+                fator = vol_max_p / vol_perfil_calc
+                for nome in ["Ibovespa","Internac.","IRF-M","IMA"]:
+                    pesos_perfil[nome] *= fator
+                # Redistribuir para IDA-DI e IHFA
+                excesso = 1 - sum(pesos_perfil.values())
+                pesos_perfil["IDA-DI"] = pesos_perfil.get("IDA-DI",0) + excesso * 0.7
+                pesos_perfil["IHFA"]   = pesos_perfil.get("IHFA",0)   + excesso * 0.3
+                total_w = sum(pesos_perfil.values())
+                pesos_perfil = {k: v/total_w for k, v in pesos_perfil.items()}
+
+        except Exception:
+            # Fallback: usar pesos padrão HRP
+            pesos_perfil = {a["name"]: a["w"] for a in ASSET_CFG}
+
+    # Calcular retorno do portfólio com pesos do perfil
+    port_ret_perfil = sum(
+        pesos_perfil[a["name"]] * series[a["name"]]["valor"]
+        .pct_change().dropna().reindex(common_idx).ffill()
+        for a in ASSET_CFG
+    )
+
+    # Usar pesos do perfil como portfólio principal se perfil != Original
+    if perfil_sel != "HRP+BL Original":
+        port_ret_original = port_ret.copy()
+        port_ret = port_ret_perfil
+        # Atualizar WEIGHTS temporariamente para o perfil
+        WEIGHTS_PERFIL = pesos_perfil.copy()
+    else:
+        port_ret_original = port_ret.copy()
+        WEIGHTS_PERFIL = WEIGHTS.copy()
+
     m_port = metrics(port_ret, cdi_aligned)
     m_ibov = metrics(ibov_ret, cdi_aligned)
 
@@ -813,9 +954,16 @@ with col_h1:
     </p>
     """, unsafe_allow_html=True)
 with col_h2:
+    perfil_badge_cor = {
+        "HRP+BL Original": "badge-blue",
+        "Conservador":      "badge-green",
+        "Moderado":         "badge-amber",
+        "Agressivo":        "badge-red",
+    }.get(perfil_sel, "badge-blue")
     st.markdown(f"""
     <div style='text-align:right;padding-top:4px'>
-        <span class='badge badge-blue'>rf = CDI médio {rf_ann*100:.2f}% a.a.</span>
+        <span class='badge {perfil_badge_cor}'>Perfil: {perfil_sel}</span><br>
+        <span class='badge badge-blue' style='margin-top:4px'>rf = CDI médio {rf_ann*100:.2f}% a.a.</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1566,7 +1714,25 @@ with tab3:
 
 # ── Tab 4: Rebalanceamento ────────────────────────────────────────────────────
 with tab4:
-    st.markdown("Insira os pesos atuais da carteira e veja o drift em relação ao target HRP+BL.")
+    st.markdown(
+        f"Insira os pesos atuais da carteira e veja o drift em relação ao target "
+        f"**{'HRP+BL' if perfil_sel == 'HRP+BL Original' else perfil_sel}**."
+    )
+
+    # Mostrar pesos do perfil selecionado
+    if perfil_sel != "HRP+BL Original":
+        st.markdown(
+            f"<div style='font-size:12px;padding:8px 12px;border-radius:6px;"
+            f"background:{cor_perfil}15;border-left:3px solid {cor_perfil};"
+            f"margin-bottom:1rem'>"
+            f"<strong style='color:{cor_perfil}'>Perfil {perfil_sel}</strong> — "
+            f"pesos calculados com restrição de volatilidade "
+            f"{perfil_cfg['vol_min']:.1f}%–{perfil_cfg['vol_max']:.1f}% a.a.: "
+            + " | ".join([f"<strong>{a['name']}</strong> {pesos_perfil.get(a['name'],a['w'])*100:.1f}%"
+                          for a in ASSET_CFG])
+            + "</div>",
+            unsafe_allow_html=True
+        )
 
     # ── Seção de recálculo semestral ──────────────────────────────────────────
     with st.expander("🔄 Recalcular pesos HRP com dados recentes", expanded=False):
