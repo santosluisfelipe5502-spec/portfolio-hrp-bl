@@ -3933,7 +3933,9 @@ with tab7:
             "Melhor ano":   f"{melhor_ano} ({vals.max():+.1f}%)",
             "Pior ano":     f"{pior_ano} ({vals.min():+.1f}%)",
             "Anos positivos":f"{(vals>0).sum()} de {len(vals)}",
-            "Anos > CDI":   f"{(df_heat_anual[col].dropna() > df_heat_anual['CDI'].dropna()).sum()} de {len(vals)}" if col != "CDI" else "—",
+            "Anos > CDI":   (lambda a, b: f"{(a>b).sum()} de {len(vals)}")(
+                                *df_heat_anual[col].dropna().align(df_heat_anual["CDI"].dropna())
+                            ) if col != "CDI" else "—",
         })
 
     df_resumo = pd.DataFrame(rows_resumo).set_index("Ativo")
