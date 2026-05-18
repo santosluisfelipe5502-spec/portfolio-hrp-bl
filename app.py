@@ -1165,7 +1165,6 @@ def fig_to_image(fig, width=700, height=350):
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
-        import pandas as _pd
 
         fig_mpl, ax = plt.subplots(figsize=(width/100, height/100), dpi=100)
         ax.set_facecolor("#f8f7f4")
@@ -1173,54 +1172,91 @@ def fig_to_image(fig, width=700, height=350):
 
         colors_cycle = ["#378ADD","#1D9E75","#E24B4A","#BA7517","#7F77DD","#888780","#C4770A"]
         has_dates = False
+        plotted   = 0
 
         for i, trace in enumerate(fig.data):
-            cor  = colors_cycle[i % len(colors_cycle)]
-            x_raw = list(trace.x) if hasattr(trace,"x") and trace.x is not None else []
-            y_raw = list(trace.y) if hasattr(trace,"y") and trace.y is not None else []
-            if not x_raw or not y_raw:
+            cor = colors_cycle[i % len(colors_cycle)]
+
+            # Extrair X e Y de forma robusta (Plotly pode retornar tuple, list, array ou Index)
+            try:
+                x_raw = trace.x
+                y_raw = trace.y
+                if x_raw is None or y_raw is None:
+                    continue
+                x_raw = list(x_raw)
+                y_raw = [float(v) if v is not None else 0.0 for v in y_raw]
+                if len(x_raw) == 0 or len(y_raw) == 0:
+                    continue
+            except Exception:
                 continue
 
-            name  = getattr(trace, "name", f"Série {i+1}") or f"Série {i+1}"
-            lw    = 2.0 if i == 0 else 1.2
-            ls    = "-" if i == 0 else ("--" if i == 1 else ":")
+            name  = str(getattr(trace, "name", None) or f"Série {i+1}")
+            lw    = 2.0 if plotted == 0 else 1.2
+            ls    = "-" if plotted == 0 else ("--" if plotted == 1 else ":")
             ttype = type(trace).__name__.lower()
 
-            # Tentar converter X para datas
+            # Detectar se X são datas
+            x_is_date = False
             try:
-                x_plot = [_pd.Timestamp(xi) for xi in x_raw]
+                pd.Timestamp(x_raw[0])
+                x_is_date = True
                 has_dates = True
+                x_plot = pd.to_datetime(x_raw)
             except Exception:
                 x_plot = list(range(len(y_raw)))
 
+            # Pular traces de preenchimento de área (fill only, sem linha visível)
+            is_fill_only = (
+                hasattr(trace, "fill") and
+                getattr(trace, "fill", "") in ("toself",) and
+                (getattr(trace, "line", None) is None or
+                 getattr(getattr(trace, "line", None), "color", "") == "rgba(0,0,0,0)")
+            )
+            if is_fill_only:
+                try:
+                    ax.fill_between(x_plot, y_raw, alpha=0.12, color=cor)
+                except Exception:
+                    pass
+                continue
+
             if "bar" in ttype:
-                ax.bar(x_plot, y_raw, label=name, color=cor, alpha=0.75)
-            elif hasattr(trace,"fill") and getattr(trace,"fill","") in ("tozeroy","tonexty","toself"):
-                ax.fill_between(x_plot, y_raw, alpha=0.15, color=cor)
+                ax.bar(range(len(y_raw)), y_raw, label=name, color=cor, alpha=0.75, width=0.6)
+            elif hasattr(trace,"fill") and getattr(trace,"fill","") in ("tozeroy","tonexty"):
+                try:
+                    ax.fill_between(x_plot, y_raw, alpha=0.12, color=cor)
+                except Exception:
+                    pass
                 ax.plot(x_plot, y_raw, color=cor, lw=lw, ls=ls, label=name)
             else:
                 ax.plot(x_plot, y_raw, color=cor, lw=lw, ls=ls, label=name)
 
-        if has_dates:
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-            ax.xaxis.set_major_locator(mdates.YearLocator(2))
-            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, fontsize=7)
+            plotted += 1
 
-        ax.axhline(0, color="#888780", lw=0.8)
+        if has_dates:
+            try:
+                ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+                n_years = max(1, (pd.Timestamp(x_raw[-1]) - pd.Timestamp(x_raw[0])).days // 365 // 4)
+                ax.xaxis.set_major_locator(mdates.YearLocator(n_years))
+                plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, fontsize=7)
+            except Exception:
+                pass
+
+        ax.axhline(0, color="#888780", lw=0.8, linestyle="-")
         ax.set_ylabel("%", fontsize=8)
-        ax.legend(fontsize=7, loc="upper left")
-        ax.grid(True, alpha=0.3, color="#e8e6e0")
+        if plotted > 0:
+            ax.legend(fontsize=7, loc="best", framealpha=0.8)
+        ax.grid(True, alpha=0.25, color="#cccccc")
         ax.spines[["top","right"]].set_visible(False)
         ax.tick_params(axis="both", labelsize=7)
-        plt.tight_layout(pad=0.5)
+        plt.tight_layout(pad=0.4)
 
         buf = io.BytesIO()
-        fig_mpl.savefig(buf, format="png", dpi=120, bbox_inches="tight",
+        fig_mpl.savefig(buf, format="png", dpi=130, bbox_inches="tight",
                         facecolor="#f8f7f4")
         plt.close(fig_mpl)
         buf.seek(0)
         return buf.read()
-    except Exception as _e:
+    except Exception:
         return None
 
 def fig_to_reportlab(fig, width=700, height=350):
@@ -3335,6 +3371,43 @@ with tab5:
                     f"com confiança de **{tau_bl:.0%}**. "
                     f"Disponíveis para uso no Monte Carlo."
                 )
+
+                # ── Botão para aplicar pesos ao portfólio customizado ─────────
+                st.divider()
+                st.markdown("#### Aplicar pesos ao portfólio customizado")
+                st.markdown(
+                    "Clique no botão abaixo para transferir os pesos sugeridos "
+                    "diretamente para o portfólio customizado. "
+                    "Todas as abas serão atualizadas automaticamente."
+                )
+
+                col_ap1, col_ap2 = st.columns([1, 2])
+                with col_ap1:
+                    if st.button("✅ Aplicar pesos BL ao portfólio", 
+                                  key="btn_aplicar_bl", type="primary"):
+                        # Transferir pesos BL para os campos de rebalanceamento
+                        for a in ativos_bl:
+                            peso_bl = round(w_bl_fin.get(a, 0) * 100, 1)
+                            st.session_state[f"rebal_{a}"] = peso_bl
+                        st.success(
+                            f"✅ Pesos aplicados! O portfólio customizado agora "
+                            f"reflete o cenário **{preset}**. "
+                            f"Navegue para outras abas para ver o impacto."
+                        )
+                        st.balloons()
+                with col_ap2:
+                    # Mostrar resumo dos pesos que serão aplicados
+                    st.markdown(
+                        "<div style='font-size:12px;padding:8px 12px;border-radius:6px;"
+                        "background:#f8f7f4;border-left:3px solid #378ADD'>"
+                        "<strong>Pesos que serão aplicados:</strong><br>" +
+                        " | ".join([
+                            f"<strong>{a}</strong>: {w_bl_fin.get(a,0)*100:.1f}%"
+                            for a in ativos_bl
+                        ]) +
+                        "</div>",
+                        unsafe_allow_html=True
+                    )
 
             except Exception as e:
                 st.error(f"Erro no cálculo BL Dinâmico: {e}")
