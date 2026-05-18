@@ -1077,7 +1077,7 @@ _total_atual = sum(_pesos_atuais.values())
 
 # Calcular drift apenas se os pesos foram customizados (total != 100 ou algum diferente)
 _pesos_sao_default = all(
-    abs(_pesos_atuais[cfg["name"]] - cfg["w"]*100) < 0.05
+    abs(_pesos_atuais[cfg["name"]] - _pesos_display.get(cfg["name"], cfg["w"])*100) < 0.05
     for cfg in ASSET_CFG
 )
 
@@ -1087,7 +1087,7 @@ _ativos_atencao = []
 if not _pesos_sao_default:
     for cfg in ASSET_CFG:
         _w_atual  = _pesos_atuais[cfg["name"]]
-        _w_target = cfg["w"] * 100
+        _w_target = _pesos_display.get(cfg["name"], cfg["w"]) * 100
         _drift    = _w_atual - _w_target
         if abs(_drift) > _banda_alerta:
             _ativos_fora.append((cfg["name"], _drift, cfg["color"]))
@@ -2771,10 +2771,10 @@ with tab4:
             atual[cfg["name"]] = col.number_input(
                 f"{cfg['name']} (%)",
                 min_value=0.0, max_value=100.0,
-                value=round(cfg["w"]*100, 1), step=0.1,
+                value=round(_pesos_display.get(cfg["name"], cfg["w"])*100, 1), step=0.1,
                 format="%.1f",
                 key=f"rebal_{cfg['name']}",
-                help=f"Target HRP+BL: {cfg['w']*100:.1f}%"
+                help=f"Target {perfil_sel}: {_pesos_display.get(cfg['name'], cfg['w'])*100:.1f}%"
             )
 
     total_atual = sum(atual.values())
@@ -3140,8 +3140,8 @@ with tab5:
     # Linha de peso HRP+BL
     fig_sc.add_trace(go.Scatter(
         x=ativos,
-        y=[round(WEIGHTS[k]*100, 1) for k in ativos],
-        name="Peso HRP+BL (%)",
+        y=[round(WEIGHTS_ATIVO.get(k, WEIGHTS.get(k,0))*100, 1) for k in ativos],
+        name=f"Peso {perfil_sel} (%)",
         mode="lines+markers",
         line=dict(color="#378ADD", width=2, dash="dot"),
         marker=dict(size=8),
@@ -3356,7 +3356,7 @@ with tab5:
                 rows_bl = []
                 for cfg in ASSET_CFG:
                     nome   = cfg["name"]
-                    w_orig = cfg["w"] * 100
+                    w_orig = _pesos_display.get(cfg["name"], cfg["w"]) * 100
                     w_novo = w_bl_fin.get(nome, 0) * 100
                     r_esp  = asset_rets.get(nome, 0)
                     delta  = w_novo - w_orig
@@ -4082,9 +4082,9 @@ with tab9:
         for cfg in ASSET_CFG:
             r = ret_periodo(cfg["name"], ini)
             if r is not None:
-                rets.append(cfg["w"] * r/100)
+                rets.append(_pesos_display.get(cfg["name"], cfg["w"]) * r/100)
         if not rets: return None
-        total = sum(WEIGHTS[cfg["name"]] for cfg in ASSET_CFG
+        total = sum(_pesos_display.get(cfg["name"], cfg["w"]) for cfg in ASSET_CFG
                     if ret_periodo(cfg["name"], ini) is not None)
         return round(sum(rets)/total*100, 2) if total > 0 else None
 
@@ -4126,7 +4126,7 @@ with tab9:
             "Ativo":   cfg["name"],
             "Cluster": cfg["cluster"],
             "Retorno": f"{f'+{r:.2f}%' if r and r>=0 else f'{r:.2f}%' if r else '—'}",
-            "Peso HRP+BL": f"{cfg['w']*100:.1f}%",
+            "Peso HRP+BL": f"{_pesos_display.get(cfg['name'], cfg['w'])*100:.1f}%",
         })
     st.dataframe(pd.DataFrame(rows_d), use_container_width=True, hide_index=True)
 
@@ -4143,7 +4143,7 @@ with tab9:
         s = daily_series.get(cfg["name"])
         if s is None: continue
         r = s["valor"].pct_change().reindex(port_d_idx).ffill().fillna(0)
-        port_d_ret += cfg["w"] * r
+        port_d_ret += _pesos_display.get(cfg["name"], cfg["w"]) * r
 
     port_d_cum = (1 + port_d_ret).cumprod()
     port_d_dd  = (port_d_cum - port_d_cum.cummax()) / port_d_cum.cummax() * 100
@@ -4221,7 +4221,7 @@ with tab9:
         s = daily_series.get(cfg["name"])
         if s is None:
             drift_rows.append({
-                "Ativo": cfg["name"], "Target": f"{cfg['w']*100:.1f}%",
+                "Ativo": cfg["name"], "Target": f"{_pesos_display.get(cfg['name'], cfg['w'])*100:.1f}%",
                 "Estimado": "—", "Drift": "—", "Status": "—"
             })
             continue
@@ -4229,14 +4229,15 @@ with tab9:
         ret_ativo   = (1 + retorno_mes.iloc[-n_drift:]).prod() - 1
         ret_port    = (1 + port_d_ret.iloc[-n_drift:]).prod() - 1
         # Peso estimado após performance relativa
-        w_novo = cfg["w"] * (1 + ret_ativo) / (1 + ret_port) if ret_port != -1 else cfg["w"]
-        drift  = (w_novo - cfg["w"]) * 100
+        _w_alvo = _pesos_display.get(cfg["name"], cfg["w"])
+        w_novo = _w_alvo * (1 + ret_ativo) / (1 + ret_port) if ret_port != -1 else _w_alvo
+        drift  = (w_novo - _w_alvo) * 100
         banda  = 3.0  # banda padrão
         status = "✅ OK" if abs(drift) <= banda else ("⬆️ Acima" if drift > 0 else "⬇️ Abaixo")
         drift_rows.append({
             "Ativo":    cfg["name"],
             "Cluster":  cfg["cluster"],
-            "Target":   f"{cfg['w']*100:.1f}%",
+            "Target":   f"{_pesos_display.get(cfg['name'], cfg['w'])*100:.1f}%",
             "Estimado": f"{w_novo*100:.1f}%",
             "Drift":    f"{drift:+.2f}%",
             "Status":   status,
@@ -5080,7 +5081,7 @@ with tab12:
         rows_contrib.append({
             "Ativo":             cfg["name"],
             "Cluster":           cfg["cluster"],
-            "Peso HRP+BL":       f"{cfg['w']*100:.1f}%",
+            "Peso HRP+BL":       f"{_pesos_display.get(cfg['name'], cfg['w'])*100:.1f}%",
             "Contrib. média/mês":f"{c.mean():+.4f}%",
             "Contrib. total":    f"{c.sum():+.2f}%",
             "Meses positivos":   f"{(c>0).sum()} ({(c>0).mean()*100:.0f}%)",
