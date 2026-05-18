@@ -4164,7 +4164,9 @@ with tab9:
     port_d_ret = pd.Series(0.0, index=port_d_idx)
     for cfg in ASSET_CFG:
         # Usar série diária ANBIMA se disponível, senão monitoramento diário
-        s = daily_series_anbima.get(cfg["name"]) or daily_series.get(cfg["name"])
+        _s1 = daily_series_anbima.get(cfg["name"])
+        _s2 = daily_series.get(cfg["name"])
+        s = _s1 if _s1 is not None else _s2
         if s is None: continue
         r = s["valor"].pct_change().reindex(port_d_idx).ffill().fillna(0)
         port_d_ret += _pesos_display.get(cfg["name"], cfg["w"]) * r
