@@ -3828,114 +3828,186 @@ with tab7:
 
     st.divider()
 
-    # ── Heatmap de retorno anual por ativo ────────────────────────────────────
+    # ── Heatmap de retorno anual por ativo — ranking por cor ─────────────────
     st.markdown("<div class='section-title'>heatmap de retorno anual por ativo</div>",
                 unsafe_allow_html=True)
-    st.caption("Retorno anual de cada ativo — verde = positivo, vermelho = negativo. "
-               "Permite identificar quais ativos performaram bem ou mal em cada ano.")
+    st.caption(
+        "Cores indicam **ranking anual** — azul escuro = melhor do ano, "
+        "azul claro = intermediário, vermelho = retorno negativo. "
+        "Colunas Ann. e Vol. mostram retorno anualizado e volatilidade do período."
+    )
 
-    # Calcular retorno anual de cada ativo
+    # ── Calcular retornos anuais ──────────────────────────────────────────────
     heat_data = {}
     for cfg in ASSET_CFG:
         s = series.get(cfg["name"])
         if s is None: continue
         ret = s["valor"].pct_change().dropna()
         ret_anual = ret.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
+        ret_anual.index = ret_anual.index.year
         heat_data[cfg["name"]] = ret_anual
 
-    df_heat_anual = pd.DataFrame(heat_data)
-    df_heat_anual.index = df_heat_anual.index.year
-    df_heat_anual = df_heat_anual.sort_index()
+    df_heat = pd.DataFrame(heat_data).sort_index()
 
-    # Adicionar portfólio HRP+BL e CDI — alinhar pelo índice (ano)
+    # Adicionar HRP+BL e CDI
     port_ret_anual = port_ret.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
     cdi_ret_anual  = cdi_aligned.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
-
-    # Converter índice para ano inteiro para alinhar corretamente
     port_ret_anual.index = port_ret_anual.index.year
     cdi_ret_anual.index  = cdi_ret_anual.index.year
 
-    # Reindexar pelo mesmo índice do heatmap
-    anos_idx = df_heat_anual.index
-    df_heat_anual.insert(0, "HRP+BL", port_ret_anual.reindex(anos_idx))
-    df_heat_anual["CDI"] = cdi_ret_anual.reindex(anos_idx)
+    anos_idx = df_heat.index
+    df_heat.insert(0, "HRP+BL", port_ret_anual.reindex(anos_idx))
+    df_heat["CDI"] = cdi_ret_anual.reindex(anos_idx)
 
-    # Transpor: ativos nas linhas, anos nas colunas
-    df_heat_T = df_heat_anual.T
+    anos_cols = list(df_heat.index)  # anos nas linhas → transpor para colunas
+    ativos_list = list(df_heat.columns)  # ativos nas colunas → transpor para linhas
 
-    fig_heat_anual = go.Figure(go.Heatmap(
-        z=df_heat_T.values,
-        x=[str(c) for c in df_heat_T.columns],
-        y=df_heat_T.index.tolist(),
-        text=[[f"{v:+.1f}%" if not pd.isna(v) else "—"
-               for v in row] for row in df_heat_T.values],
-        texttemplate="%{text}",
-        textfont=dict(size=9, color="white"),
-        colorscale=[
-            [0.0,  "#8B0000"],
-            [0.35, "#E24B4A"],
-            [0.48, "#FCEBEB"],
-            [0.52, "#EAF3DE"],
-            [0.65, "#1D9E75"],
-            [1.0,  "#0A4D38"],
-        ],
-        zmid=0,
-        colorbar=dict(
-            title="Retorno (%)",
-            tickfont=dict(color="#444441", size=9),
-            thickness=12,
-            len=0.8,
+    # ── Paleta de ranking ─────────────────────────────────────────────────────
+    CORES_RANK = [
+        "#1a3a5c", "#2255a4", "#2e72c4", "#5b9ad5",
+        "#8dbfe4", "#b5d4ee", "#d4e9f7", "#e8f0dd",
+    ]
+    COR_NEG    = "#8b1a1a"
+    COR_ANN    = "#1c3a1c"
+    COR_VOL    = "#3a1c3a"
+    COR_VAZIO  = "#d3d1c7"
+
+    def cor_fundo(val, rank, col_tipo):
+        if pd.isna(val):   return COR_VAZIO
+        if col_tipo == "ann": return COR_ANN
+        if col_tipo == "vol": return COR_VOL
+        if val < 0:        return COR_NEG
+        idx = min(rank - 1, len(CORES_RANK) - 1)
+        return CORES_RANK[idx]
+
+    def cor_texto_hex(bg):
+        h = bg.lstrip("#")
+        r, g, b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+        lum = 0.2126*r + 0.7152*g + 0.0722*b
+        return "white" if lum < 140 else "#1a1a18"
+
+    # ── Calcular Ann. e Vol. por ativo ────────────────────────────────────────
+    def anualizado(s):
+        s2 = s.dropna()/100 + 1
+        return round((s2.prod()**(1/len(s2))-1)*100, 2) if len(s2)>0 else np.nan
+
+    def vol_anual(s):
+        s2 = s.dropna()
+        return round(float(s2.std()), 2) if len(s2)>1 else np.nan
+
+    # ── Montar figura com go.Table ────────────────────────────────────────────
+    # Usar go.Table para renderizar células coloridas individualmente
+    header_cols = ["Ativo"] + [str(a) for a in anos_cols] + ["Ann.", "Vol."]
+
+    cell_vals   = [ativos_list]
+    cell_colors = [["#1a1a18"] * len(ativos_list)]
+    cell_fonts  = [["white"] * len(ativos_list)]
+
+    for ano in anos_cols:
+        col_vals  = df_heat.loc[ano]
+        # ranking desse ano (excluindo CDI do ranking)
+        rank_vals = col_vals.drop("CDI", errors="ignore").dropna().sort_values(ascending=False)
+        col_colors, col_texts, col_font = [], [], []
+        for ativo in ativos_list:
+            val = col_vals.get(ativo, np.nan)
+            if ativo == "CDI":
+                rank = len(ativos_list)
+            else:
+                rank = list(rank_vals.index).index(ativo) + 1 if ativo in rank_vals.index else len(ativos_list)
+            bg = cor_fundo(val, rank, "ano")
+            fg = cor_texto_hex(bg)
+            col_colors.append(bg)
+            col_texts.append(f"{val:.1f}%" if not pd.isna(val) else "—")
+            col_font.append(fg)
+        cell_vals.append(col_texts)
+        cell_colors.append(col_colors)
+        cell_fonts.append(col_font)
+
+    # Colunas Ann. e Vol.
+    for col_tipo, label in [("ann","Ann."),("vol","Vol.")]:
+        col_texts, col_colors_t, col_font_t = [], [], []
+        for ativo in ativos_list:
+            s = df_heat[ativo].dropna()
+            val = anualizado(s) if col_tipo=="ann" else vol_anual(s)
+            bg  = cor_fundo(val, 1, col_tipo)
+            fg  = cor_texto_hex(bg)
+            col_texts.append(f"{val:.1f}%" if not pd.isna(val) else "—")
+            col_colors_t.append(bg)
+            col_font_t.append(fg)
+        cell_vals.append(col_texts)
+        cell_colors.append(col_colors_t)
+        cell_fonts.append(col_font_t)
+
+    fig_heat = go.Figure(go.Table(
+        columnwidth=[120] + [60]*len(anos_cols) + [70, 70],
+        header=dict(
+            values=["<b>"+h+"</b>" for h in header_cols],
+            fill_color="#1a1a18",
+            font=dict(color="white", size=10, family="Helvetica"),
+            align="center",
+            height=32,
         ),
-        hovertemplate="<b>%{y}</b><br>Ano: %{x}<br>Retorno: %{text}<extra></extra>",
+        cells=dict(
+            values=cell_vals,
+            fill_color=cell_colors,
+            font=dict(color=cell_fonts, size=10, family="Helvetica"),
+            align="center",
+            height=36,
+            line=dict(color="#f8f7f4", width=2),
+        ),
     ))
 
-    # Linhas de grade entre ativos
-    for i in range(len(df_heat_T)):
-        fig_heat_anual.add_hline(
-            y=i - 0.5,
-            line_color="#f8f7f4",
-            line_width=1.5,
+    fig_heat.update_layout(
+        paper_bgcolor="#f8f7f4",
+        height=max(300, len(ativos_list)*42 + 80),
+        margin=dict(l=0, r=0, t=8, b=0),
+    )
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+    # ── Legenda ───────────────────────────────────────────────────────────────
+    leg_cols = st.columns(6)
+    leg_items = [
+        ("#1a3a5c", "Rank 1 — melhor ano"),
+        ("#5b9ad5", "Rank intermediário"),
+        ("#d4e9f7", "Rank inferior"),
+        ("#8b1a1a", "Retorno negativo"),
+        ("#1c3a1c", "Retorno anualizado"),
+        ("#3a1c3a", "Volatilidade"),
+    ]
+    for i, (cor, label) in enumerate(leg_items):
+        leg_cols[i].markdown(
+            f"<div style='background:{cor};color:white;padding:4px 8px;"
+            f"border-radius:4px;font-size:11px;text-align:center'>{label}</div>",
+            unsafe_allow_html=True
         )
 
-    fig_heat_anual.update_layout(
-        plot_bgcolor="#f8f7f4",
-        paper_bgcolor="#f8f7f4",
-        height=max(280, len(df_heat_T) * 42),
-        font=dict(color="#1a1a18"),
-        margin=dict(l=0, r=0, t=8, b=0),
-        xaxis=dict(
-            side="top",
-            tickfont=dict(color="#444441", size=10),
-            color="#1a1a18",
-            gridcolor="#f8f7f4",
-        ),
-        yaxis=dict(
-            tickfont=dict(color="#444441", size=11),
-            color="#1a1a18",
-            autorange="reversed",
-        ),
-    )
-    st.plotly_chart(fig_heat_anual, use_container_width=True)
+    st.divider()
 
-    # ── Tabela resumo — melhor e pior ano por ativo ───────────────────────────
+    # ── Tabela resumo ─────────────────────────────────────────────────────────
     st.markdown("<div class='section-title'>resumo — melhor e pior ano por ativo</div>",
                 unsafe_allow_html=True)
 
     rows_resumo = []
-    for col in df_heat_anual.columns:
-        vals = df_heat_anual[col].dropna()
+    for ativo in ativos_list:
+        vals = df_heat[ativo].dropna()
         if len(vals) == 0: continue
         melhor_ano = vals.idxmax()
         pior_ano   = vals.idxmin()
+        # Anos acima do CDI
+        if ativo != "CDI":
+            a_alinhado, b_alinhado = vals.align(df_heat["CDI"].dropna())
+            n_acima_cdi = (a_alinhado > b_alinhado).sum()
+            anos_cdi_str = f"{n_acima_cdi} de {len(vals)}"
+        else:
+            anos_cdi_str = "—"
         rows_resumo.append({
-            "Ativo":        col,
-            "Retorno médio":f"{vals.mean():+.1f}%",
-            "Melhor ano":   f"{melhor_ano} ({vals.max():+.1f}%)",
-            "Pior ano":     f"{pior_ano} ({vals.min():+.1f}%)",
+            "Ativo":         ativo,
+            "Retorno médio": f"{vals.mean():+.1f}%",
+            "Retorno anual.":f"{anualizado(vals):+.1f}%",
+            "Melhor ano":    f"{melhor_ano} ({vals.max():+.1f}%)",
+            "Pior ano":      f"{pior_ano} ({vals.min():+.1f}%)",
             "Anos positivos":f"{(vals>0).sum()} de {len(vals)}",
-            "Anos > CDI":   (lambda a, b: f"{(a>b).sum()} de {len(vals)}")(
-                                *df_heat_anual[col].dropna().align(df_heat_anual["CDI"].dropna())
-                            ) if col != "CDI" else "—",
+            "Anos > CDI":    anos_cdi_str,
         })
 
     df_resumo = pd.DataFrame(rows_resumo).set_index("Ativo")
