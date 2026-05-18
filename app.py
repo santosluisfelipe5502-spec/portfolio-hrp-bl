@@ -51,6 +51,79 @@ _UNUSED = dict(
 )
 warnings.filterwarnings("ignore")
 
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║           ÍNDICE DO ARQUIVO — ONDE ENCONTRAR CADA COISA                    ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║                                                                              ║
+# ║  CONFIGURAÇÃO (linha ~60)                                                   ║
+# ║    • Estilo CSS — cores, fontes, cards                                      ║
+# ║    • ASSET_CFG — ativos, pesos, cores, clusters                             ║
+# ║    • PERFIS — Conservador, Moderado, Agressivo (vol alvo e bandas)          ║
+# ║    • TAIL_EVENTS — eventos de cauda históricos                              ║
+# ║    • WEIGHTS — dicionário de pesos padrão HRP+BL                            ║
+# ║                                                                              ║
+# ║  MODELOS (linha ~135)                                                        ║
+# ║    • compute_hrp() — algoritmo HRP de López de Prado                        ║
+# ║    • metrics() — Sharpe, Sortino, Calmar, VaR, Max DD                      ║
+# ║    • fig_to_reportlab() — gráficos para exportação PDF                      ║
+# ║    • gerar_pdf_gestor() — relatório técnico completo                        ║
+# ║    • gerar_pdf_cliente() — relatório simplificado para o cliente            ║
+# ║                                                                              ║
+# ║  DADOS (linha ~200)                                                          ║
+# ║    • fetch_cdi() — CDI via API Banco Central                                ║
+# ║    • fetch_ptax() — PTAX via API Banco Central                              ║
+# ║    • fetch_ipca() — IPCA via API Banco Central                              ║
+# ║    • fetch_yfinance() — SPY, TLT, Ibovespa via Yahoo Finance                ║
+# ║    • load_from_repo() — carrega arquivos do GitHub automaticamente           ║
+# ║    • read_uploaded() — parser universal ANBIMA/Investing.com/BCB            ║
+# ║    • to_monthly() — agrega série diária para mensal                         ║
+# ║    • align_and_compute() — alinha séries e calcula portfólio                ║
+# ║    • calc_intl() — retorno Internacional (SPY+TLT) em BRL via PTAX          ║
+# ║                                                                              ║
+# ║  SIDEBAR (linha ~447)                                                        ║
+# ║    • Perfil de risco — seletor Conservador/Moderado/Agressivo               ║
+# ║    • CDI — busca automática ou manual                                        ║
+# ║    • Upload de arquivos ANBIMA                                               ║
+# ║    • Configurações — banda de rebalanceamento, peso SPY/TLT                 ║
+# ║                                                                              ║
+# ║  CARGA DE DADOS (linha ~565)                                                 ║
+# ║    • Carrega e processa todas as séries históricas                           ║
+# ║    • Calcula pesos do perfil selecionado                                     ║
+# ║    • Calcula IPCA, PTAX, portfólio base                                     ║
+# ║                                                                              ║
+# ║  HEADER E KPIs (linha ~948)                                                  ║
+# ║    • Alertas de rebalanceamento                                              ║
+# ║    • KPIs principais — acumulado, retorno, vol, Sharpe, etc.                ║
+# ║                                                                              ║
+# ║  ABAS DO DASHBOARD (linha ~1641)                                             ║
+# ║    Tab 0  (~1658) — 📖 Guia — metodologia e como usar                       ║
+# ║    Tab 1  (~1864) — 📈 Retorno acumulado                                    ║
+# ║    Tab 2  (~2068) — 📉 Drawdown                                             ║
+# ║    Tab 3  (~2167) — 📊 Métricas + exportação PDF                            ║
+# ║    Tab 4  (~2486) — 🔄 Rebalanceamento + recálculo HRP                      ║
+# ║    Tab 5  (~2777) — 🌐 Cenários + BL Dinâmico                              ║
+# ║    Tab 6  (~3404) — ⚡ Eventos de cauda                                     ║
+# ║    Tab 7  (~3568) — 📦 Ativos individuais                                   ║
+# ║    Tab 8  (~3735) — 🔬 Análise comparativa                                  ║
+# ║    Tab 9  (~3964) — 📡 Monitoramento diário                                 ║
+# ║    Tab 10 (~4177) — 📐 Janelas móveis                                       ║
+# ║    Tab 11 (~4423) — 🎲 Monte Carlo                                          ║
+# ║    Tab 12 (~4836) — 📊 Atribuição de retorno                                ║
+# ║                                                                              ║
+# ║  COMO ADICIONAR UM NOVO ATIVO                                               ║
+# ║    1. Adicione em ASSET_CFG (linha ~124) com nome, cor, cluster e peso      ║
+# ║    2. Adicione em REPO_FILES (linha ~700) com o nome do arquivo GitHub      ║
+# ║    3. Atualize PERFIS (linha ~448) com as bandas de peso do novo ativo      ║
+# ║    4. Rode o recálculo HRP na aba Rebalanceamento para novos pesos          ║
+# ║                                                                              ║
+# ║  COMO ADICIONAR UM EVENTO DE CAUDA                                          ║
+# ║    • Adicione em TAIL_EVENTS (linha ~1121) com name, start, end, color      ║
+# ║                                                                              ║
+# ║  COMO ALTERAR BANDAS DOS PERFIS DE RISCO                                    ║
+# ║    • Edite PERFIS (linha ~448) — vol_min, vol_max e bandas por ativo        ║
+# ║                                                                              ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
 st.set_page_config(
     page_title="HRP + Black-Litterman | Dashboard",
     page_icon="📊",
@@ -1158,119 +1231,107 @@ def hex_to_rgba(hex_color, alpha=0.5):
     return hex_color
 
 # ── Funções de geração de PDF ────────────────────────────────────────────────
-def fig_to_image(fig, width=700, height=350):
-    """Converte figura Plotly para PNG via matplotlib (sempre disponível)."""
+def fig_to_reportlab(fig, width_cm=16, height_cm=8):
+    """Converte figura Plotly para gráfico nativo reportlab (sem dependências externas)."""
     try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import matplotlib.dates as mdates
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.graphics.charts.lineplots import LinePlot
+        from reportlab.platypus.flowables import Flowable
+        from reportlab.lib import colors as rl_colors
 
-        fig_mpl, ax = plt.subplots(figsize=(width/100, height/100), dpi=100)
-        ax.set_facecolor("#f8f7f4")
-        fig_mpl.patch.set_facecolor("#f8f7f4")
+        W = width_cm * 28.35  # cm para pontos
+        H = height_cm * 28.35
 
-        colors_cycle = ["#378ADD","#1D9E75","#E24B4A","#BA7517","#7F77DD","#888780","#C4770A"]
-        has_dates = False
-        plotted   = 0
+        # Extrair dados das traces Plotly
+        series_data = []
+        series_colors = []
+        series_names  = []
+        colors_cycle  = ["#378ADD","#1D9E75","#E24B4A","#BA7517","#7F77DD","#888780","#C4770A"]
+        plotted = 0
 
         for i, trace in enumerate(fig.data):
-            cor = colors_cycle[i % len(colors_cycle)]
-
-            # Extrair X e Y de forma robusta (Plotly pode retornar tuple, list, array ou Index)
             try:
                 x_raw = trace.x
                 y_raw = trace.y
-                if x_raw is None or y_raw is None:
-                    continue
-                x_raw = list(x_raw)
-                y_raw = [float(v) if v is not None else 0.0 for v in y_raw]
-                if len(x_raw) == 0 or len(y_raw) == 0:
-                    continue
+                if x_raw is None or y_raw is None: continue
+                x_list = list(x_raw)
+                y_list = [float(v) if v is not None else 0.0 for v in y_raw]
+                if not x_list or not y_list: continue
+
+                # Pular traces de área pura (sem linha)
+                is_fill_only = (
+                    hasattr(trace,"fill") and
+                    getattr(trace,"fill","") == "toself" and
+                    getattr(getattr(trace,"line",None),"color","") == "rgba(0,0,0,0)"
+                )
+                if is_fill_only: continue
+
+                # Converter X para índice numérico normalizado 0-100
+                n = len(x_list)
+                pts = [(j/(n-1)*100 if n>1 else 0, y_list[j]) for j in range(n)]
+                series_data.append(pts)
+                series_colors.append(colors_cycle[plotted % len(colors_cycle)])
+                name = str(getattr(trace,"name",None) or f"Série {plotted+1}")
+                series_names.append(name)
+                plotted += 1
+                if plotted >= 5: break  # Máximo 5 séries no PDF
             except Exception:
                 continue
 
-            name  = str(getattr(trace, "name", None) or f"Série {i+1}")
-            lw    = 2.0 if plotted == 0 else 1.2
-            ls    = "-" if plotted == 0 else ("--" if plotted == 1 else ":")
-            ttype = type(trace).__name__.lower()
+        if not series_data:
+            return None
 
-            # Detectar se X são datas
-            x_is_date = False
-            try:
-                pd.Timestamp(x_raw[0])
-                x_is_date = True
-                has_dates = True
-                x_plot = pd.to_datetime(x_raw)
-            except Exception:
-                x_plot = list(range(len(y_raw)))
+        # Construir LinePlot nativo
+        drawing = Drawing(W, H)
+        lp = LinePlot()
+        lp.x = 45
+        lp.y = 25
+        lp.width  = W - 55
+        lp.height = H - 35
+        lp.data = series_data
+        lp.joinedLines = 1
 
-            # Pular traces de preenchimento de área (fill only, sem linha visível)
-            is_fill_only = (
-                hasattr(trace, "fill") and
-                getattr(trace, "fill", "") in ("toself",) and
-                (getattr(trace, "line", None) is None or
-                 getattr(getattr(trace, "line", None), "color", "") == "rgba(0,0,0,0)")
-            )
-            if is_fill_only:
-                try:
-                    ax.fill_between(x_plot, y_raw, alpha=0.12, color=cor)
-                except Exception:
-                    pass
-                continue
+        dash_styles = [None, [4,2], [2,2], [6,2,2,2], [1,1]]
+        for j, cor in enumerate(series_colors):
+            lp.lines[j].strokeColor = rl_colors.HexColor(cor)
+            lp.lines[j].strokeWidth = 2 if j == 0 else 1.2
+            ds = dash_styles[j % len(dash_styles)]
+            if ds: lp.lines[j].strokeDashArray = ds
 
-            if "bar" in ttype:
-                ax.bar(range(len(y_raw)), y_raw, label=name, color=cor, alpha=0.75, width=0.6)
-            elif hasattr(trace,"fill") and getattr(trace,"fill","") in ("tozeroy","tonexty"):
-                try:
-                    ax.fill_between(x_plot, y_raw, alpha=0.12, color=cor)
-                except Exception:
-                    pass
-                ax.plot(x_plot, y_raw, color=cor, lw=lw, ls=ls, label=name)
-            else:
-                ax.plot(x_plot, y_raw, color=cor, lw=lw, ls=ls, label=name)
+        # Eixos
+        from reportlab.graphics.charts.axes import XValueAxis, YValueAxis
+        lp.xValueAxis.strokeColor = rl_colors.HexColor("#888780")
+        lp.yValueAxis.strokeColor = rl_colors.HexColor("#888780")
+        lp.xValueAxis.labels.fontName  = "Helvetica"
+        lp.xValueAxis.labels.fontSize  = 6
+        lp.yValueAxis.labels.fontName  = "Helvetica"
+        lp.yValueAxis.labels.fontSize  = 6
 
-            plotted += 1
+        drawing.add(lp)
 
-        if has_dates:
-            try:
-                ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-                n_years = max(1, (pd.Timestamp(x_raw[-1]) - pd.Timestamp(x_raw[0])).days // 365 // 4)
-                ax.xaxis.set_major_locator(mdates.YearLocator(n_years))
-                plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, fontsize=7)
-            except Exception:
-                pass
+        # Legenda manual
+        from reportlab.graphics.shapes import String, Rect
+        leg_x = lp.x
+        leg_y = H - 14
+        for j, (nome, cor) in enumerate(zip(series_names, series_colors)):
+            ox = leg_x + j * 80
+            drawing.add(Rect(ox, leg_y, 14, 6,
+                             fillColor=rl_colors.HexColor(cor),
+                             strokeColor=rl_colors.HexColor(cor)))
+            drawing.add(String(ox+17, leg_y, nome[:12],
+                               fontName="Helvetica", fontSize=6,
+                               fillColor=rl_colors.HexColor("#444441")))
 
-        ax.axhline(0, color="#888780", lw=0.8, linestyle="-")
-        ax.set_ylabel("%", fontsize=8)
-        if plotted > 0:
-            ax.legend(fontsize=7, loc="best", framealpha=0.8)
-        ax.grid(True, alpha=0.25, color="#cccccc")
-        ax.spines[["top","right"]].set_visible(False)
-        ax.tick_params(axis="both", labelsize=7)
-        plt.tight_layout(pad=0.4)
+        # Retornar como Flowable
+        class DrawingFlowable(Flowable):
+            def __init__(self, d): super().__init__(); self._d = d
+            def wrap(self, aw, ah): return self._d.width, self._d.height
+            def draw(self): self._d.drawOn(self.canv, 0, 0)
 
-        buf = io.BytesIO()
-        fig_mpl.savefig(buf, format="png", dpi=130, bbox_inches="tight",
-                        facecolor="#f8f7f4")
-        plt.close(fig_mpl)
-        buf.seek(0)
-        return buf.read()
+        return DrawingFlowable(drawing)
+
     except Exception:
         return None
-
-def fig_to_reportlab(fig, width=700, height=350):
-    """Converte figura Plotly para objeto Image do reportlab."""
-    try:
-        from reportlab.platypus import Image as RLImage
-        img_bytes = fig_to_image(fig, width, height)
-        if img_bytes:
-            rl_w = 16*cm
-            rl_h = rl_w * height / width
-            return RLImage(io.BytesIO(img_bytes), width=rl_w, height=rl_h)
-    except Exception:
-        pass
-    return None
 
 def gerar_pdf_gestor(dados):
     """Gera relatório técnico completo para o gestor."""
