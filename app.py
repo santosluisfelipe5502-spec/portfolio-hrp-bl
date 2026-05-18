@@ -3826,6 +3826,111 @@ with tab7:
     else:
         st.info("Selecione ativos e tipos de eventos para ver o impacto.")
 
+    st.divider()
+
+    # ── Heatmap de retorno anual por ativo ────────────────────────────────────
+    st.markdown("<div class='section-title'>heatmap de retorno anual por ativo</div>",
+                unsafe_allow_html=True)
+    st.caption("Retorno anual de cada ativo — verde = positivo, vermelho = negativo. "
+               "Permite identificar quais ativos performaram bem ou mal em cada ano.")
+
+    # Calcular retorno anual de cada ativo
+    heat_data = {}
+    for cfg in ASSET_CFG:
+        s = series.get(cfg["name"])
+        if s is None: continue
+        ret = s["valor"].pct_change().dropna()
+        ret_anual = ret.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
+        heat_data[cfg["name"]] = ret_anual
+
+    df_heat_anual = pd.DataFrame(heat_data)
+    df_heat_anual.index = df_heat_anual.index.year
+    df_heat_anual = df_heat_anual.sort_index()
+
+    # Adicionar portfólio HRP+BL e CDI
+    port_ret_anual = port_ret.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
+    cdi_ret_anual  = cdi_aligned.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
+    df_heat_anual.insert(0, "HRP+BL", port_ret_anual.values[:len(df_heat_anual)])
+    df_heat_anual["CDI"] = cdi_ret_anual.values[:len(df_heat_anual)]
+
+    # Transpor: ativos nas linhas, anos nas colunas
+    df_heat_T = df_heat_anual.T
+
+    fig_heat_anual = go.Figure(go.Heatmap(
+        z=df_heat_T.values,
+        x=[str(c) for c in df_heat_T.columns],
+        y=df_heat_T.index.tolist(),
+        text=[[f"{v:+.1f}%" if not pd.isna(v) else "—"
+               for v in row] for row in df_heat_T.values],
+        texttemplate="%{text}",
+        textfont=dict(size=9, color="white"),
+        colorscale=[
+            [0.0,  "#8B0000"],
+            [0.35, "#E24B4A"],
+            [0.48, "#FCEBEB"],
+            [0.52, "#EAF3DE"],
+            [0.65, "#1D9E75"],
+            [1.0,  "#0A4D38"],
+        ],
+        zmid=0,
+        colorbar=dict(
+            title="Retorno (%)",
+            tickfont=dict(color="#444441", size=9),
+            thickness=12,
+            len=0.8,
+        ),
+        hovertemplate="<b>%{y}</b><br>Ano: %{x}<br>Retorno: %{text}<extra></extra>",
+    ))
+
+    # Linhas de grade entre ativos
+    for i in range(len(df_heat_T)):
+        fig_heat_anual.add_hline(
+            y=i - 0.5,
+            line_color="#f8f7f4",
+            line_width=1.5,
+        )
+
+    fig_heat_anual.update_layout(
+        plot_bgcolor="#f8f7f4",
+        paper_bgcolor="#f8f7f4",
+        height=max(280, len(df_heat_T) * 42),
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0, r=0, t=8, b=0),
+        xaxis=dict(
+            side="top",
+            tickfont=dict(color="#444441", size=10),
+            color="#1a1a18",
+            gridcolor="#f8f7f4",
+        ),
+        yaxis=dict(
+            tickfont=dict(color="#444441", size=11),
+            color="#1a1a18",
+            autorange="reversed",
+        ),
+    )
+    st.plotly_chart(fig_heat_anual, use_container_width=True)
+
+    # ── Tabela resumo — melhor e pior ano por ativo ───────────────────────────
+    st.markdown("<div class='section-title'>resumo — melhor e pior ano por ativo</div>",
+                unsafe_allow_html=True)
+
+    rows_resumo = []
+    for col in df_heat_anual.columns:
+        vals = df_heat_anual[col].dropna()
+        if len(vals) == 0: continue
+        melhor_ano = vals.idxmax()
+        pior_ano   = vals.idxmin()
+        rows_resumo.append({
+            "Ativo":        col,
+            "Retorno médio":f"{vals.mean():+.1f}%",
+            "Melhor ano":   f"{melhor_ano} ({vals.max():+.1f}%)",
+            "Pior ano":     f"{pior_ano} ({vals.min():+.1f}%)",
+            "Anos positivos":f"{(vals>0).sum()} de {len(vals)}",
+            "Anos > CDI":   f"{(df_heat_anual[col].dropna() > df_heat_anual['CDI'].dropna()).sum()} de {len(vals)}" if col != "CDI" else "—",
+        })
+
+    df_resumo = pd.DataFrame(rows_resumo).set_index("Ativo")
+    st.dataframe(df_resumo, use_container_width=True)
 
 
 # ── Tab 8: Análise comparativa ────────────────────────────────────────────────
