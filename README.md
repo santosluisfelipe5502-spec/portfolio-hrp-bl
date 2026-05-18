@@ -1,72 +1,54 @@
-# HRP + Black-Litterman Dashboard
-
-Dashboard interativo de monitoramento de portfólio com dados reais, construído com Streamlit.
-
-## Funcionalidades
-
-- **Retorno acumulado** vs CDI, Ibovespa e 1/N igual
-- **Drawdown histórico** comparativo
-- **Métricas completas**: Sharpe, Sortino, Calmar, VaR (rf = CDI real via BCB)
-- **Rebalanceamento**: detecção automática de drift com banda configurável
-- **Cenários macroeconômicos**: Selic, IPCA, PIB, câmbio
-- **CDI automático** via API pública do Banco Central do Brasil
-- **Upload de dados** para IHFA, IDA Pré, IMA, IDA-Geral, Ibovespa, SPY, TLT
-
-## Como rodar localmente
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
+HRP + Black-Litterman Dashboard
+Dashboard de gestão de portfólio usando as metodologias Hierarchical Risk Parity (HRP)
+de López de Prado (2016) e Black-Litterman (BL) de Black & Litterman (1992).
+Acesso
+🔗 Dashboard: https://portfolio-hrp-bl.streamlit.app
+Metodologia
+HRP distribui o risco hierarquicamente entre clusters de ativos correlacionados,
+sem precisar inverter a matriz de covariância (mais robusto que Risk Parity clássico).
+Black-Litterman combina retornos de equilíbrio históricos com visões táticas do
+investidor usando estatística Bayesiana — produzindo retornos esperados mais estáveis.
+Ativos
+Ativo	Cluster	Peso HRP+BL	Fonte
+IRF-M	Renda fixa	26.8%	ANBIMA
+IMA-Geral	Renda fixa	18.8%	ANBIMA
+IHFA	Âncora	17.2%	ANBIMA
+IDA-DI	Âncora	14.4%	ANBIMA
+Ibovespa	Equity	14.5%	Yahoo Finance
+Internacional (SPY+TLT)	Equity	8.3%	Yahoo Finance
+Perfis de Risco
+Perfil	Vol alvo	Retorno esperado
+Conservador	0.5% – 1.0% a.a.	CDI + 0.3% a 0.8%
+Moderado	2.0% – 3.5% a.a.	CDI + 1% a 2%
+Agressivo	acima de 5% a.a.	CDI + 2% a 4%
+Atualização dos dados
+Automático: CDI, PTAX, IPCA via BCB · Ibovespa, SPY, TLT via Yahoo Finance
+Manual (mensal): Baixar da ANBIMA e subir no GitHub:
+`IRFM.xls` — IRF-M
+`IMA.xls` — IMA-Geral
+`IHFA.xls` — IHFA
+`IDADI.xls` — IDA-DI
+Estrutura do código
+Todo o código está em `app.py`. O arquivo tem um índice comentado no topo
+explicando onde fica cada seção. Principais pontos de manutenção:
+Adicionar ativo: `ASSET_CFG` + `REPO_FILES` + `PERFIS`
+Adicionar evento de cauda: `TAIL_EVENTS`
+Alterar perfis de risco: `PERFIS` (vol_min, vol_max, bandas)
+Alterar pesos: botão "Recalcular HRP" na aba Rebalanceamento
+Dependências
 ```
-
-Acesse em: http://localhost:8501
-
-## Deploy gratuito no Streamlit Cloud
-
-1. Faça fork deste repositório no GitHub
-2. Acesse https://share.streamlit.io
-3. Clique em "New app" → selecione seu repositório
-4. Defina `app.py` como arquivo principal
-5. Clique em "Deploy" — pronto, você terá um link público
-
-O CDI é buscado automaticamente via API do Banco Central a cada 24h.
-
-## Deploy no Railway (alternativa)
-
-```bash
-# Instale Railway CLI
-npm install -g @railway/cli
-railway login
-railway init
-railway up
+streamlit >= 1.35.0
+pandas >= 2.0.0
+numpy >= 1.24.0
+plotly >= 5.18.0
+scipy >= 1.11.0
+requests >= 2.31.0
+openpyxl >= 3.1.0
+xlrd >= 2.0.0
+yfinance >= 0.2.40
+reportlab >= 4.0.0
+kaleido >= 0.2.0
 ```
-
-## Atualização dos dados
-
-### CDI (automático)
-Buscado via `https://api.bcb.gov.br/dados/serie/bcdata.sgs.4391/dados?formato=json`
-Atualiza automaticamente a cada 24h com `@st.cache_data(ttl=86400)`.
-
-### Índices (manual via upload)
-Na sidebar, faça upload dos arquivos Excel/CSV no formato ANBIMA:
-- Coluna 1: código do índice
-- Coluna 2: data (DD/MM/AAAA)
-- Coluna 3: valor do índice
-
-### Internacional (SPY + TLT)
-Faça upload separado de SPY e TLT. O app combina com os pesos configurados (padrão 40%/60%).
-
-## Estrutura dos pesos HRP+BL
-
-| Ativo      | Cluster     | Peso   |
-|------------|-------------|--------|
-| IDA Pré    | Renda fixa  | 26.8%  |
-| IMA        | Renda fixa  | 18.8%  |
-| IHFA       | Âncora      | 17.2%  |
-| IDA-Geral  | Âncora      | 14.4%  |
-| Ibovespa   | Equity      | 14.5%  |
-| Internac.  | Equity      |  8.3%  |
-
-## Taxa livre de risco
-
-CDI mensal real (série 4391 do SGS/BCB). Sharpe e Sortino calculados com rf variável mês a mês.
+Referências
+López de Prado, M. (2016). Building Diversified Portfolios that Outperform Out-of-Sample
+Black, F. & Litterman, R. (1992). Global Portfolio Optimization
