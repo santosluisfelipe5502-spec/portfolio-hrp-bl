@@ -456,7 +456,18 @@ def read_uploaded(file):
         return None
 
 def to_monthly(df):
+    """Agrega série para mensal. Preserva frequência original se já for mensal."""
+    if df is None or len(df) == 0:
+        return df
+    # Se já tem menos de 2 observações por mês em média, já é mensal
+    dias_total = (df.index[-1] - df.index[0]).days
+    if dias_total > 0 and len(df) / (dias_total / 30) < 1.5:
+        return df  # já é mensal
     return df.resample("ME").last()
+
+def to_daily(df):
+    """Mantém série em frequência diária, sem agregar."""
+    return df if df is not None else None
 
 def calc_intl(spy_df, tlt_df, w_spy=0.40, w_tlt=0.60, ptax_df=None):
     """Calcula índice Internacional combinado.
@@ -478,7 +489,12 @@ def calc_intl(spy_df, tlt_df, w_spy=0.40, w_tlt=0.60, ptax_df=None):
     idx.iloc[0] = 100
     return idx.rename("valor").to_frame()
 
-def align_and_compute(series_dict, cdi_df, start="2009-01-31", end=None):
+def align_and_compute(series_dict, cdi_df, start="2009-01-31", end=None, weights=None):
+    """Alinha séries e calcula retorno do portfólio.
+    weights: dicionário de pesos (default: WEIGHTS global HRP+BL)
+    """
+    if weights is None:
+        weights = WEIGHTS
     if end is None:
         end = pd.Timestamp.today() + pd.offsets.MonthEnd(0)
     end = pd.Timestamp(end)
@@ -492,7 +508,8 @@ def align_and_compute(series_dict, cdi_df, start="2009-01-31", end=None):
     for r in rets.values():
         common = common.intersection(r.index)
 
-    port_ret = sum(WEIGHTS[k] * rets[k][common] for k in WEIGHTS if k in rets)
+    port_ret = sum(weights.get(k, WEIGHTS.get(k, 0)) * rets[k].reindex(common).ffill()
+                   for k in weights if k in rets)
     cdi_aligned = cdi_df["valor"].reindex(common).ffill()
 
     return port_ret, cdi_aligned, common
@@ -760,6 +777,9 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
         "Ibovespa":  "Ibovespa",
     }
 
+    # Dicionário para preservar séries diárias ANBIMA
+    daily_series_anbima = {}
+
     for cfg in ASSET_CFG:
         if cfg["key"] == "INTL":
             continue
@@ -787,6 +807,9 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
         if repo_df is not None:
             raw = read_from_df(repo_df, repo_path)
             if raw is not None:
+                # Guardar série diária para uso no drawdown e monitoramento
+                daily_series_anbima[nome] = raw
+                # Agregar para mensal para HRP e métricas
                 series[nome] = to_monthly(raw)
                 has_real = True
                 continue
@@ -964,11 +987,11 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
             st.warning(f"⚠️ Erro ao calcular pesos do perfil {perfil_sel}: {e_perfil}. "
                        f"Usando pesos HRP+BL original.")
 
-    # Calcular retorno do portfólio com pesos do perfil
-    port_ret_perfil = sum(
-        pesos_perfil[a["name"]] * series[a["name"]]["valor"]
-        .pct_change().dropna().reindex(common_idx).ffill()
-        for a in ASSET_CFG
+    # Calcular retorno do portfólio com pesos do perfil (usando align_and_compute)
+    port_ret_perfil, _, _ = align_and_compute(
+        series, cdi_raw,
+        str(start_ts)[:10], str(end_ts)[:10],
+        weights=pesos_perfil
     )
 
     # Usar pesos do perfil como portfólio principal se perfil != Original
@@ -4140,7 +4163,8 @@ with tab9:
     port_d_idx = all_idx
     port_d_ret = pd.Series(0.0, index=port_d_idx)
     for cfg in ASSET_CFG:
-        s = daily_series.get(cfg["name"])
+        # Usar série diária ANBIMA se disponível, senão monitoramento diário
+        s = daily_series_anbima.get(cfg["name"]) or daily_series.get(cfg["name"])
         if s is None: continue
         r = s["valor"].pct_change().reindex(port_d_idx).ffill().fillna(0)
         port_d_ret += _pesos_display.get(cfg["name"], cfg["w"]) * r
