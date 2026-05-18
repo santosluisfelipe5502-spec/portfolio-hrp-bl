@@ -3847,11 +3847,18 @@ with tab7:
     df_heat_anual.index = df_heat_anual.index.year
     df_heat_anual = df_heat_anual.sort_index()
 
-    # Adicionar portfólio HRP+BL e CDI
+    # Adicionar portfólio HRP+BL e CDI — alinhar pelo índice (ano)
     port_ret_anual = port_ret.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
     cdi_ret_anual  = cdi_aligned.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
-    df_heat_anual.insert(0, "HRP+BL", port_ret_anual.values[:len(df_heat_anual)])
-    df_heat_anual["CDI"] = cdi_ret_anual.values[:len(df_heat_anual)]
+
+    # Converter índice para ano inteiro para alinhar corretamente
+    port_ret_anual.index = port_ret_anual.index.year
+    cdi_ret_anual.index  = cdi_ret_anual.index.year
+
+    # Reindexar pelo mesmo índice do heatmap
+    anos_idx = df_heat_anual.index
+    df_heat_anual.insert(0, "HRP+BL", port_ret_anual.reindex(anos_idx))
+    df_heat_anual["CDI"] = cdi_ret_anual.reindex(anos_idx)
 
     # Transpor: ativos nas linhas, anos nas colunas
     df_heat_T = df_heat_anual.T
