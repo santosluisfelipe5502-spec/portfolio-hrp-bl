@@ -1146,13 +1146,15 @@ _premio_ipca   = (_ann_ret_port - _ann_ret_ipca) * 100  # prêmio vs IPCA em p.p
 _premio_cdi    = (_ann_ret_port - rf_ann) * 100          # prêmio vs CDI em p.p.
 
 def kpi(label, value, sub="", cls="", sub2=""):
-    sub2_html = f"<div class='metric-sub' style='margin-top:2px'>{sub2}</div>" if sub2 else ""
-    return f"""<div class='metric-card'>
-        <div class='metric-label'>{label}</div>
-        <div class='metric-value {cls}'>{value}</div>
-        <div class='metric-sub'>{sub}</div>
-        {sub2_html}
-    </div>"""
+    s2 = f'<div class="metric-sub" style="margin-top:2px">{sub2}</div>' if sub2 else ""
+    return (
+        '<div class="metric-card">'
+        f'<div class="metric-label">{label}</div>'
+        f'<div class="metric-value {cls}">{value}</div>'
+        f'<div class="metric-sub">{sub}</div>'
+        f'{s2}'
+        '</div>'
+    )
 
 # ── Linha 1: HRP+BL original ──
 st.markdown("<div style='font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;"
