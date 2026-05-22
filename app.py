@@ -1138,19 +1138,35 @@ acum_port = (port_cum.iloc[-1] / 100 - 1) * 100
 acum_cdi  = (cdi_cum.iloc[-1]  / 100 - 1) * 100
 acum_ibov = (ibov_cum.iloc[-1] / 100 - 1) * 100
 
-def kpi(label, value, sub="", cls=""):
+# ── Calcular IPCA+ equivalente ────────────────────────────────────────────────
+# Prêmio anual do portfólio acima do IPCA
+_ann_ret_port  = m_port["ann_ret"]          # retorno anual do portfólio
+_ann_ret_ipca  = (1 + ipca_ret.mean())**12 - 1  # IPCA anualizado
+_premio_ipca   = (_ann_ret_port - _ann_ret_ipca) * 100  # prêmio vs IPCA em p.p.
+_premio_cdi    = (_ann_ret_port - rf_ann) * 100          # prêmio vs CDI em p.p.
+
+def kpi(label, value, sub="", cls="", sub2=""):
+    sub2_html = f"<div class='metric-sub' style='margin-top:2px'>{sub2}</div>" if sub2 else ""
     return f"""<div class='metric-card'>
         <div class='metric-label'>{label}</div>
         <div class='metric-value {cls}'>{value}</div>
         <div class='metric-sub'>{sub}</div>
+        {sub2_html}
     </div>"""
 
 # ── Linha 1: HRP+BL original ──
 st.markdown("<div style='font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;"
             "color:#378ADD;margin-bottom:6px'>HRP + Black-Litterman</div>", unsafe_allow_html=True)
 k1,k2,k3,k4,k5,k6,k7 = st.columns(7)
-k1.markdown(kpi("Acumulado", f"+{acum_port:.1f}%", f"CDI +{acum_cdi:.1f}%", "pos"), unsafe_allow_html=True)
-k2.markdown(kpi("Retorno a.a.", f"{m_port['ann_ret']*100:.2f}%", f"IBOV {m_port['ann_ret']*100 - m_ibov['ann_ret']*100:+.1f}%"), unsafe_allow_html=True)
+k1.markdown(kpi("Acumulado", f"+{acum_port:.1f}%",
+    f"CDI +{acum_cdi:.1f}%",
+    "pos",
+    sub2=f"IPCA +{(port_cum.iloc[-1]/ipca6_cum.iloc[-1]-1)*100:.1f}% acum."
+), unsafe_allow_html=True)
+k2.markdown(kpi("Retorno a.a.", f"{m_port['ann_ret']*100:.2f}%",
+    f"CDI + {_premio_cdi:.2f}% a.a.",
+    sub2=f"IPCA + {_premio_ipca:.2f}% a.a."
+), unsafe_allow_html=True)
 k3.markdown(kpi("Volatilidade a.a.", f"{m_port['ann_vol']*100:.2f}%", f"IBOV {m_ibov['ann_vol']*100:.1f}%", "good"), unsafe_allow_html=True)
 cls_sharpe = "pos" if m_port["sharpe"] > 0.2 else "warn" if m_port["sharpe"] > 0 else "neg"
 k4.markdown(kpi("Sharpe (rf=CDI)", f"{m_port['sharpe']:.3f}", f"IBOV {m_ibov['sharpe']:.3f}", cls_sharpe), unsafe_allow_html=True)
@@ -1180,13 +1196,22 @@ if custom_valid_hdr:
                 "color:#E24B4A;margin:8px 0 6px'>Portfólio customizado</div>", unsafe_allow_html=True)
     ck1,ck2,ck3,ck4,ck5,ck6,ck7 = st.columns(7)
     diff_acum = acum_cust - acum_port
+    _ann_ret_cust  = m_cust["ann_ret"]
+    _premio_cdi_c  = (_ann_ret_cust - rf_ann) * 100
+    _premio_ipca_c = (_ann_ret_cust - _ann_ret_ipca) * 100
+    _acum_ipca_c   = (c_cum.iloc[-1]/ipca6_cum.iloc[-1]-1)*100
+
     ck1.markdown(kpi("Acumulado", f"+{acum_cust:.1f}%",
         f"{'↑' if diff_acum>=0 else '↓'} {diff_acum:+.1f}% vs HRP+BL",
-        "pos" if acum_cust >= acum_port else "warn"), unsafe_allow_html=True)
+        "pos" if acum_cust >= acum_port else "warn",
+        sub2=f"IPCA +{_acum_ipca_c:.1f}% acum."
+    ), unsafe_allow_html=True)
     diff_ret = (m_cust["ann_ret"] - m_port["ann_ret"])*100
     ck2.markdown(kpi("Retorno a.a.", f"{m_cust['ann_ret']*100:.2f}%",
-        f"{diff_ret:+.1f}% vs HRP+BL",
-        "pos" if diff_ret >= 0 else "warn"), unsafe_allow_html=True)
+        f"CDI + {_premio_cdi_c:.2f}% a.a.",
+        "pos" if diff_ret >= 0 else "warn",
+        sub2=f"IPCA + {_premio_ipca_c:.2f}% a.a."
+    ), unsafe_allow_html=True)
     diff_vol = (m_cust["ann_vol"] - m_port["ann_vol"])*100
     cls_vol = "pos" if diff_vol <= 0 else "warn"
     ck3.markdown(kpi("Volatilidade a.a.", f"{m_cust['ann_vol']*100:.2f}%",
