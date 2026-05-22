@@ -2608,16 +2608,39 @@ with tab4:
             "de retornos reais dos ativos e sugere novos pesos. "
             "Use semestralmente para manter o modelo atualizado."
         )
+
+        # ── Proteção por senha — apenas o gestor pode recalcular ─────────────
+        SENHA_GESTOR = "TcgQeCqhysjL"
+        senha_input = st.text_input(
+            "🔑 Senha do gestor",
+            type="password",
+            placeholder="Digite a senha para recalcular",
+            key="senha_hrp",
+            help="Funcionalidade restrita ao gestor do portfólio."
+        )
+        senha_ok = (senha_input == SENHA_GESTOR)
+
+        if senha_input and not senha_ok:
+            st.error("❌ Senha incorreta.")
+
         col_hrp1, col_hrp2 = st.columns(2)
         janela_hrp = col_hrp1.selectbox(
             "Janela histórica", [24, 36, 48, 60],
             index=1,
             format_func=lambda x: f"{x} meses ({x//12} anos)",
-            key="janela_hrp"
+            key="janela_hrp",
+            disabled=not senha_ok,
         )
-        rodar_hrp = col_hrp2.button("▶ Calcular novos pesos HRP", key="btn_hrp", type="primary")
+        rodar_hrp = col_hrp2.button(
+            "▶ Calcular novos pesos HRP",
+            key="btn_hrp", type="primary",
+            disabled=not senha_ok,
+        )
 
-        if rodar_hrp:
+        if not senha_ok and not senha_input:
+            st.info("🔒 Digite a senha do gestor para acessar esta funcionalidade.")
+
+        if rodar_hrp and senha_ok:
             with st.spinner(f"Calculando HRP com os últimos {janela_hrp} meses..."):
                 try:
                     # Montar DataFrame de retornos dos últimos N meses
