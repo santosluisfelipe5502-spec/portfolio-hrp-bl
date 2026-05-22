@@ -3823,6 +3823,98 @@ with tab7:
 
         df_imp = pd.DataFrame(rows_imp)
         st.dataframe(df_imp, use_container_width=True, hide_index=True)
+
+        # ── Análise comparativa automática ────────────────────────────────────
+        st.markdown("<div class='section-title'>análise comparativa — eventos de cauda</div>",
+                    unsafe_allow_html=True)
+
+        # Calcular retorno médio por ativo nos eventos filtrados
+        medias_ativo = {}
+        n_pos_ativo  = {}
+        n_neg_ativo  = {}
+        n_total      = 0
+
+        for ev in eventos_filtrados:
+            try:
+                ev_s = pd.Timestamp(ev["start"])
+                ev_e = pd.Timestamp(ev["end"])
+                idx_ev = common_idx[(common_idx >= ev_s) & (common_idx <= ev_e)]
+                if len(idx_ev) == 0: continue
+                n_total += 1
+                for cfg in [c for c in ASSET_CFG if c["name"] in ativos_sel]:
+                    nome = cfg["name"]
+                    r = series[nome]["valor"].pct_change().dropna()
+                    ret_ev = (1 + r.reindex(idx_ev).fillna(0)).prod() - 1
+                    ret_pct = ret_ev * 100
+                    if nome not in medias_ativo:
+                        medias_ativo[nome] = []
+                        n_pos_ativo[nome]  = 0
+                        n_neg_ativo[nome]  = 0
+                    medias_ativo[nome].append(ret_pct)
+                    if ret_pct >= 0: n_pos_ativo[nome]  += 1
+                    else:            n_neg_ativo[nome]  += 1
+            except Exception:
+                continue
+
+        if medias_ativo and n_total > 0:
+            # Ordenar por retorno médio
+            ranking = sorted(medias_ativo.items(),
+                             key=lambda x: np.mean(x[1]), reverse=True)
+
+            melhor_ativo  = ranking[0]
+            pior_ativo    = ranking[-1]
+            mais_protetor = max(n_pos_ativo.items(), key=lambda x: x[1])
+            mais_vulneravel = max(n_neg_ativo.items(), key=lambda x: x[1])
+
+            col_a1, col_a2 = st.columns(2)
+            with col_a1:
+                st.markdown(
+                    f"<div class='metric-card' style='border-top:3px solid #1D9E75'>"
+                    f"<div class='metric-label'>Melhor performance em crises</div>"
+                    f"<div class='metric-value pos' style='font-size:20px'>{melhor_ativo[0]}</div>"
+                    f"<div class='metric-sub'>Retorno médio: <strong>{np.mean(melhor_ativo[1]):+.2f}%</strong> "
+                    f"por evento · Positivo em {n_pos_ativo[melhor_ativo[0]]}/{n_total} eventos</div>"
+                    f"</div>", unsafe_allow_html=True
+                )
+            with col_a2:
+                st.markdown(
+                    f"<div class='metric-card' style='border-top:3px solid #E24B4A'>"
+                    f"<div class='metric-label'>Pior performance em crises</div>"
+                    f"<div class='metric-value neg' style='font-size:20px'>{pior_ativo[0]}</div>"
+                    f"<div class='metric-sub'>Retorno médio: <strong>{np.mean(pior_ativo[1]):+.2f}%</strong> "
+                    f"por evento · Negativo em {n_neg_ativo[pior_ativo[0]]}/{n_total} eventos</div>"
+                    f"</div>", unsafe_allow_html=True
+                )
+
+            # Ranking completo em texto
+            st.markdown("**Ranking por retorno médio nos eventos selecionados:**")
+            ranking_txt = ""
+            for i, (nome, rets) in enumerate(ranking, 1):
+                media = np.mean(rets)
+                emoji = "🟢" if media >= 0 else "🔴"
+                n_pos = n_pos_ativo.get(nome, 0)
+                linha = f"{i}. **{nome}** — média {media:+.2f}% por evento · "
+                linha += f"{emoji} Positivo em {n_pos}/{n_total} crises"
+                ranking_txt += linha + "\n"
+
+            st.markdown(ranking_txt)
+
+            # Insight automático
+            if np.mean(melhor_ativo[1]) > 0:
+                st.success(
+                    f"✅ **{melhor_ativo[0]}** foi o ativo mais resiliente nas crises analisadas, "
+                    f"com retorno médio positivo de **{np.mean(melhor_ativo[1]):+.2f}%** por evento."
+                )
+            if np.mean(pior_ativo[1]) < -2:
+                st.warning(
+                    f"⚠️ **{pior_ativo[0]}** foi o mais afetado nas crises, "
+                    f"com queda média de **{np.mean(pior_ativo[1]):.2f}%** por evento. "
+                    f"Isso é esperado para ativos de maior risco — "
+                    f"a diversificação do HRP+BL reduz esse impacto no portfólio total."
+                )
+        else:
+            st.info("Selecione eventos e ativos para ver a análise comparativa.")
+
     else:
         st.info("Selecione ativos e tipos de eventos para ver o impacto.")
 
@@ -3837,7 +3929,8 @@ with tab7:
         "Colunas Ann. e Vol. mostram retorno anualizado e volatilidade do período."
     )
 
-    # ── Calcular retornos anuais ──────────────────────────────────────────────
+    # ── Calcular retornos anuais a partir de 2009 ────────────────────────────
+    ANO_INICIO_HEAT = 2009
     heat_data = {}
     for cfg in ASSET_CFG:
         s = series.get(cfg["name"])
@@ -3845,9 +3938,11 @@ with tab7:
         ret = s["valor"].pct_change().dropna()
         ret_anual = ret.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
         ret_anual.index = ret_anual.index.year
+        ret_anual = ret_anual[ret_anual.index >= ANO_INICIO_HEAT]
         heat_data[cfg["name"]] = ret_anual
 
     df_heat = pd.DataFrame(heat_data).sort_index()
+    df_heat = df_heat[df_heat.index >= ANO_INICIO_HEAT]
 
     # Adicionar HRP+BL e CDI
     port_ret_anual = port_ret.resample("YE").apply(lambda x: (1+x).prod()-1) * 100
@@ -3859,8 +3954,8 @@ with tab7:
     df_heat.insert(0, "HRP+BL", port_ret_anual.reindex(anos_idx))
     df_heat["CDI"] = cdi_ret_anual.reindex(anos_idx)
 
-    anos_cols = list(df_heat.index)  # anos nas linhas → transpor para colunas
-    ativos_list = list(df_heat.columns)  # ativos nas colunas → transpor para linhas
+    anos_cols   = list(df_heat.index)
+    ativos_list = list(df_heat.columns)
 
     # ── Paleta de ranking ─────────────────────────────────────────────────────
     CORES_RANK = [
@@ -3888,11 +3983,13 @@ with tab7:
 
     # ── Calcular Ann. e Vol. por ativo ────────────────────────────────────────
     def anualizado(s):
-        s2 = s.dropna()/100 + 1
+        """Retorno anualizado considerando apenas dados de 2009 em diante."""
+        s2 = s[s.index >= ANO_INICIO_HEAT].dropna()/100 + 1
         return round((s2.prod()**(1/len(s2))-1)*100, 2) if len(s2)>0 else np.nan
 
     def vol_anual(s):
-        s2 = s.dropna()
+        """Volatilidade anual considerando apenas dados de 2009 em diante."""
+        s2 = s[s.index >= ANO_INICIO_HEAT].dropna()
         return round(float(s2.std()), 2) if len(s2)>1 else np.nan
 
     # ── Montar figura com go.Table ────────────────────────────────────────────
