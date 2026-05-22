@@ -1204,9 +1204,9 @@ if custom_valid_hdr:
     _acum_ipca_c   = (c_cum.iloc[-1]/ipca6_cum.iloc[-1]-1)*100
 
     ck1.markdown(kpi("Acumulado", f"+{acum_cust:.1f}%",
-        f"{'↑' if diff_acum>=0 else '↓'} {diff_acum:+.1f}% vs HRP+BL",
+        f"CDI + {_premio_cdi_c:.2f}% a.a.",
         "pos" if acum_cust >= acum_port else "warn",
-        sub2=f"IPCA +{_acum_ipca_c:.1f}% acum."
+        sub2=f"IPCA + {_premio_ipca_c:.2f}% a.a."
     ), unsafe_allow_html=True)
     diff_ret = (m_cust["ann_ret"] - m_port["ann_ret"])*100
     ck2.markdown(kpi("Retorno a.a.", f"{m_cust['ann_ret']*100:.2f}%",
