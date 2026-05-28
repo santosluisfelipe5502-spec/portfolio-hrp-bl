@@ -3709,6 +3709,145 @@ with tab6:
             unsafe_allow_html=True
         )
 
+    st.divider()
+
+    # ── Estudo: Ficar investido vs Zerar para CDI ─────────────────────────────
+    st.markdown("<div class='section-title'>ficar investido vs zerar para o CDI após cada crise</div>",
+                unsafe_allow_html=True)
+    st.markdown(
+        "Compara o retorno de **ficar investido** no portfólio com o retorno de "
+        "**zerar tudo e ir para o CDI** imediatamente após o fundo de cada crise. "
+        "Mostra o custo do pânico — quanto o investidor deixa de ganhar ao sair na baixa."
+    )
+
+    # Seletor de janelas
+    janelas_ev = st.multiselect(
+        "Janelas de análise pós-crise",
+        [6, 12, 24, 36],
+        default=[12, 24, 36],
+        format_func=lambda x: f"{x} meses",
+        key="janelas_pos_crise"
+    )
+
+    if not janelas_ev:
+        st.info("Selecione pelo menos uma janela de análise.")
+    else:
+        # Calcular retorno customizado se disponível
+        custom_w_ev = {cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}",
+                       cfg["w"]*100)/100 for cfg in ASSET_CFG}
+        total_ev = sum(custom_w_ev.values())
+        custom_valid_ev = abs(total_ev - 1.0) < 0.02
+        if custom_valid_ev:
+            c_ret_ev = sum(
+                custom_w_ev[a["name"]] * series[a["name"]]["valor"]
+                .pct_change().dropna().reindex(common_idx).ffill()
+                for a in ASSET_CFG
+            )
+
+        rows_pos_crise = []
+        for ev in TAIL_EVENTS:
+            try:
+                ev_end = pd.Timestamp(ev["end"])
+                # Ponto de saída = fim do evento (fundo da crise)
+                # Encontrar o mês mais próximo disponível
+                idx_apos = common_idx[common_idx >= ev_end]
+                if len(idx_apos) == 0:
+                    continue
+                t0 = idx_apos[0]  # primeiro mês após o evento
+
+                row = {"Evento": ev["name"], "Fim da crise": t0.strftime("%b/%Y")}
+
+                for n_meses in sorted(janelas_ev):
+                    # Verificar se temos dados suficientes
+                    idx_janela = common_idx[
+                        (common_idx >= t0) &
+                        (common_idx <= t0 + pd.DateOffset(months=n_meses))
+                    ]
+                    if len(idx_janela) < 2:
+                        row[f"HRP+BL {n_meses}m"] = "—"
+                        row[f"CDI {n_meses}m"] = "—"
+                        row[f"Δ {n_meses}m"] = "—"
+                        if custom_valid_ev:
+                            row[f"Custom {n_meses}m"] = "—"
+                        continue
+
+                    # Retorno HRP+BL na janela
+                    ret_hrp_j = (1 + port_ret.reindex(idx_janela).fillna(0)).prod() - 1
+                    # Retorno CDI na janela
+                    ret_cdi_j = (1 + cdi_aligned.reindex(idx_janela).fillna(0)).prod() - 1
+                    # Delta
+                    delta_j = (ret_hrp_j - ret_cdi_j) * 100
+
+                    cls_delta = "+" if delta_j >= 0 else ""
+                    row[f"HRP+BL {n_meses}m"] = f"{ret_hrp_j*100:+.1f}%"
+                    row[f"CDI {n_meses}m"]    = f"{ret_cdi_j*100:+.1f}%"
+                    row[f"Δ {n_meses}m"]      = f"{cls_delta}{delta_j:.1f}%"
+
+                    if custom_valid_ev:
+                        ret_cust_j = (1 + c_ret_ev.reindex(idx_janela).fillna(0)).prod() - 1
+                        row[f"Custom {n_meses}m"] = f"{ret_cust_j*100:+.1f}%"
+
+                rows_pos_crise.append(row)
+            except Exception:
+                continue
+
+        if rows_pos_crise:
+            df_pos = pd.DataFrame(rows_pos_crise).set_index("Evento")
+            st.dataframe(df_pos, use_container_width=True)
+
+            # ── Insight automático ────────────────────────────────────────────
+            # Contar quantas vezes HRP+BL bateu o CDI nas janelas
+            for n_meses in sorted(janelas_ev):
+                col_hrp = f"HRP+BL {n_meses}m"
+                col_cdi = f"CDI {n_meses}m"
+                if col_hrp not in df_pos.columns:
+                    continue
+                n_total = (df_pos[col_hrp] != "—").sum()
+                if n_total == 0:
+                    continue
+                n_ganhou = 0
+                ganho_medio = 0
+                for _, r in df_pos.iterrows():
+                    try:
+                        v_hrp = float(r[col_hrp].replace("%","").replace("+",""))
+                        v_cdi = float(r[col_cdi].replace("%","").replace("+",""))
+                        if v_hrp > v_cdi:
+                            n_ganhou += 1
+                        ganho_medio += v_hrp - v_cdi
+                    except Exception:
+                        n_total -= 1
+                if n_total > 0:
+                    ganho_medio /= n_total
+                    pct = n_ganhou / n_total * 100
+                    if pct >= 60:
+                        st.success(
+                            f"✅ Em **{n_meses} meses** após as crises, o HRP+BL superou o CDI "
+                            f"em **{pct:.0f}%** dos eventos, com ganho médio de "
+                            f"**{ganho_medio:+.1f}%** — ficando investido foi a melhor decisão."
+                        )
+                    elif pct >= 40:
+                        st.info(
+                            f"📊 Em **{n_meses} meses** após as crises, o HRP+BL superou o CDI "
+                            f"em **{pct:.0f}%** dos eventos, com ganho médio de "
+                            f"**{ganho_medio:+.1f}%**."
+                        )
+                    else:
+                        st.warning(
+                            f"⚠️ Em **{n_meses} meses** após as crises, o HRP+BL superou o CDI "
+                            f"em apenas **{pct:.0f}%** dos eventos. "
+                            f"O CDI foi mais rentável nessa janela."
+                        )
+
+            # ── Nota explicativa ──────────────────────────────────────────────
+            st.caption(
+                "Metodologia: o ponto de saída é o último mês do evento de cauda "
+                "(fundo da crise). A comparação simula o investidor que entra em pânico "
+                "e migra 100% para o CDI nesse momento, perdendo a recuperação. "
+                "Δ = HRP+BL menos CDI no período — positivo significa que ficou investido "
+                "foi melhor."
+            )
+        else:
+            st.info("Não há dados suficientes para calcular as janelas pós-crise.")
 
 
 # ── Tab 7: Ativos individuais ─────────────────────────────────────────────────
