@@ -197,7 +197,8 @@ div[data-testid="stHorizontalBlock"]{gap:12px}
 # ── Constantes ───────────────────────────────────────────────────────────────
 ASSET_CFG = [
     {"name": "IRF-M",      "key": "IRFM",       "color": "#E24B4A", "cluster": "Renda fixa", "w": 0.268, "vol": 0.04},
-    {"name": "IMA",        "key": "IMA",        "color": "#1D9E75", "cluster": "Renda fixa", "w": 0.188, "vol": 0.07},
+    {"name": "IMA-B5",     "key": "IMAB5",      "color": "#1D9E75", "cluster": "Renda fixa", "w": 0.100, "vol": 0.05},
+    {"name": "IMA-B5+",    "key": "IMAB5MAIS",  "color": "#0F6E56", "cluster": "Renda fixa", "w": 0.088, "vol": 0.09},
     {"name": "IHFA",       "key": "IHFA",       "color": "#378ADD", "cluster": "Âncora",     "w": 0.172, "vol": 0.06},
     {"name": "IDA-DI",     "key": "IDADI",      "color": "#888780", "cluster": "Âncora",     "w": 0.144, "vol": 0.02},
     {"name": "Ibovespa",   "key": "IBOV",       "color": "#BA7517", "cluster": "Equity",     "w": 0.145, "vol": 0.24},
@@ -549,9 +550,10 @@ PERFIS = {
         "cor": "#1D9E75",
         "bandas": {
             "IRF-M":    (0.0,  8.0),
-            "IMA":      (0.0,  5.0),
+            "IMA-B5":   (0.0,  8.0),
+            "IMA-B5+":  (0.0,  3.0),
             "IHFA":     (0.0,  5.0),
-            "IDA-DI":   (70.0, 95.0),
+            "IDA-DI":   (65.0, 90.0),
             "Ibovespa": (0.0,  2.0),
             "Internac.":(0.0,  2.0),
         },
@@ -562,9 +564,10 @@ PERFIS = {
         "cor": "#C4770A",
         "bandas": {
             "IRF-M":    (10.0, 30.0),
-            "IMA":      (8.0,  20.0),
+            "IMA-B5":   (5.0,  16.0),
+            "IMA-B5+":  (3.0,  12.0),
             "IHFA":     (10.0, 22.0),
-            "IDA-DI":   (20.0, 40.0),
+            "IDA-DI":   (18.0, 38.0),
             "Ibovespa": (3.0,  15.0),
             "Internac.":(2.0,  10.0),
         },
@@ -575,7 +578,8 @@ PERFIS = {
         "cor": "#E24B4A",
         "bandas": {
             "IRF-M":    (5.0,  20.0),
-            "IMA":      (5.0,  20.0),
+            "IMA-B5":   (3.0,  12.0),
+            "IMA-B5+":  (3.0,  15.0),
             "IHFA":     (10.0, 25.0),
             "IDA-DI":   (0.0,  10.0),
             "Ibovespa": (20.0, 40.0),
@@ -738,9 +742,9 @@ def load_demo_series():
             arr.append(round(v, 4))
         idx = pd.date_range("2009-01-31", periods=n, freq="ME")
         return pd.DataFrame({"valor": arr}, index=idx)
-    params = [(0.085,0.04,208,1),(0.095,0.07,208,2),(0.085,0.06,208,3),
-              (0.125,0.02,208,4),(0.092,0.238,208,5),(0.118,0.184,208,6)]
-    keys = ["IRF-M","IMA","IHFA","IDA-DI","Ibovespa","Internac."]
+    params = [(0.085,0.04,208,1),(0.090,0.045,208,2),(0.100,0.09,208,7),
+              (0.085,0.06,208,3),(0.125,0.02,208,4),(0.092,0.238,208,5),(0.118,0.184,208,6)]
+    keys = ["IRF-M","IMA-B5","IMA-B5+","IHFA","IDA-DI","Ibovespa","Internac."]
     return {k: gen(*p) for k,p in zip(keys, params)}
 
 with st.spinner("Carregando dados e conectando ao Banco Central…"):
@@ -771,7 +775,8 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
 
     REPO_FILES = {
         "IRF-M":     "IRFM",
-        "IMA":       "IMA",
+        "IMA-B5":    "IMAB5",
+        "IMA-B5+":   "IMAB5MAIS",
         "IHFA":      "IHFA",
         "IDA-DI":    "IDADI",
         "Ibovespa":  "Ibovespa",
@@ -879,7 +884,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     # ── Séries diárias para monitoramento ────────────────────────────────────
     # Carrega as séries no formato diário (sem agregar para mensal)
     daily_series = {}
-    DAILY_FILES = {"IRF-M":"IRFM","IMA":"IMA","IHFA":"IHFA","IDA-DI":"IDADI"}
+    DAILY_FILES = {"IRF-M":"IRFM","IMA-B5":"IMAB5","IMA-B5+":"IMAB5MAIS","IHFA":"IHFA","IDA-DI":"IDADI"}
     for cfg in ASSET_CFG:
         if cfg["key"] in ["IBOV","INTL"]:
             continue
@@ -973,7 +978,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
             if vol_perfil_calc > vol_max_p:
                 fator = vol_max_p / vol_perfil_calc
                 pesos_ajust = {k: float(v) for k, v in pesos_perfil.items()}
-                for nome in ["Ibovespa","Internac.","IRF-M","IMA"]:
+                for nome in ["Ibovespa","Internac.","IRF-M","IMA-B5","IMA-B5+"]:
                     pesos_ajust[nome] = pesos_ajust.get(nome, 0) * fator
                 excesso = 1.0 - sum(pesos_ajust.values())
                 pesos_ajust["IDA-DI"] = pesos_ajust.get("IDA-DI",0) + excesso * 0.7
@@ -1055,7 +1060,7 @@ with col_h1:
         os.path.exists(f) for f in ["IHFA.xls","IHFA.xlsx","IHFA.csv","dados/IHFA.xls"]
     )
     if has_real and repo_ok and not any([
-        uploads.get("IRF-M"), uploads.get("IMA"), uploads.get("IHFA"),
+        uploads.get("IRF-M"), uploads.get("IMA-B5"), uploads.get("IMA-B5+"), uploads.get("IHFA"),
         uploads.get("IDA-DI"), uploads.get("Ibovespa")
     ]):
         real_tag = "📁 dados do repositório"
@@ -1715,7 +1720,8 @@ def gerar_pdf_cliente(dados):
     pesos_simple = [["Tipo de investimento", "Percentual", "Função"]]
     funcoes = {
         "IRF-M":    "Renda fixa prefixada — protege contra queda de juros",
-        "IMA":      "Títulos atrelados à inflação — proteção do poder de compra",
+        "IMA-B5":   "NTN-B até 5 anos — proteção inflacionária com duration curta",
+        "IMA-B5+":  "NTN-B acima de 5 anos — proteção inflacionária com duration longa",
         "IHFA":     "Fundos multimercado — geração de retorno diversificado",
         "IDA-DI":   "Crédito privado pós-fixado — retorno acima do CDI",
         "Ibovespa": "Ações brasileiras — potencial de retorno no longo prazo",
@@ -1762,7 +1768,7 @@ def gerar_pdf_cliente(dados):
 
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
-tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
     "📖 Guia",
     "📈 Retorno acumulado",
     "📉 Drawdown",
@@ -1776,6 +1782,7 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 
     "📐 Janelas móveis",
     "🎲 Monte Carlo",
     "📊 Atribuição de retorno",
+    "🧪 Portfólio livre",
 ])
 
 # ── Tab 0: Guia ──────────────────────────────────────────────────────────────
@@ -1837,10 +1844,12 @@ tanto o que os dados históricos dizem quanto o que você acredita que vai acont
              "Índice de títulos públicos **prefixados** (LTN e NTN-F). "
              "Representa o mercado de renda fixa pré com duration variável (~2.5 anos). "
              "Sobe quando os juros caem e cai quando os juros sobem (efeito MTM)."),
-            ("IMA-Geral", "Renda fixa", "#1D9E75", "18.8%", "ANBIMA",
-             "Índice de títulos públicos atrelados ao **IPCA** (NTN-B). "
-             "Protege contra a inflação e tem duration longa (~6 anos). "
-             "Muito sensível a movimentos na curva de juros reais."),
+            ("IMA-B5", "Renda fixa", "#1D9E75", "10.0%", "ANBIMA",
+             "Índice de NTN-B com vencimento **até 5 anos** — duration curta (~3 anos). "
+             "Protege contra inflação com menor sensibilidade a juro real que o IMA-B5+."),
+            ("IMA-B5+", "Renda fixa", "#0F6E56", "8.8%", "ANBIMA",
+             "Índice de NTN-B com vencimento **acima de 5 anos** — duration longa (~10 anos). "
+             "Protege contra inflação mas é muito sensível a movimentos na curva de juros reais."),
             ("IHFA", "Âncora", "#378ADD", "17.2%", "ANBIMA",
              "Índice de **fundos multimercado** brasileiros. "
              "Representa a capacidade dos gestores de gerar alpha independente "
@@ -3054,13 +3063,16 @@ with tab5:
     mtm_irfm      = -duration_irfm * delta_selic * 0.6
     ret_pre       = max(-12, min(22, selic * 0.84 + mtm_irfm))
 
-    # ── IMA-Geral (inflação — NTN-B) ──
-    # NTN-B paga IPCA + taxa real. Com Selic alta, a taxa real sobe e o preço cai (duration).
-    # Duration média IMA ≈ 6-7 anos → mais sensível que o pré.
-    duration_ima = 6.5
+    # ── IMA-B5 (NTN-B até 5 anos — inflação curta) ──
+    duration_b5  = 3.0
     taxa_real    = selic - ipca              # juro real implícito
-    mtm_ima      = -duration_ima * delta_selic * 0.5
-    ret_ima      = max(-20, min(30, ipca + max(3.5, taxa_real * 0.4) + mtm_ima))
+    mtm_b5       = -duration_b5 * delta_selic * 0.4
+    ret_ima_b5   = max(-12, min(25, ipca + max(3.0, taxa_real * 0.35) + mtm_b5))
+
+    # ── IMA-B5+ (NTN-B acima de 5 anos — inflação longa) ──
+    duration_b5p = 10.0
+    mtm_b5p      = -duration_b5p * delta_selic * 0.5
+    ret_ima_b5p  = max(-25, min(35, ipca + max(3.5, taxa_real * 0.45) + mtm_b5p))
 
     # ── IDA-DI (debêntures atreladas ao CDI — crédito privado pós-fixado puro) ──
     # Mais puro que o IDA-DI: só debêntures CDI+spread, sem IPCA+ ou prefixados.
@@ -3119,7 +3131,8 @@ with tab5:
 
     asset_rets = {
         "IRF-M":     round(ret_pre,       2),
-        "IMA":       round(ret_ima,       2),
+        "IMA-B5":    round(ret_ima_b5,    2),
+        "IMA-B5+":   round(ret_ima_b5p,   2),
         "IHFA":      round(ret_ihfa,      2),
         "IDA-DI":    round(ret_ida_geral, 2),
         "Ibovespa":  round(ret_ibov,      2),
@@ -5633,6 +5646,311 @@ with tab12:
         f"<div class='metric-sub'>Contribuição total: "
         f"{contribuicoes_totais[menor_contrib]:+.2f}%</div>"
         f"</div>", unsafe_allow_html=True
+    )
+
+
+# ── Tab 13: Portfólio livre ───────────────────────────────────────────────────
+with tab13:
+    st.markdown("<div class='section-title'>portfólio livre — monte e compare</div>",
+                unsafe_allow_html=True)
+    st.markdown(
+        "Monte uma carteira combinando **tickers do Yahoo Finance** "
+        "(ações, ETFs, índices) e **ativos ANBIMA** do modelo, defina os pesos "
+        "e compare com HRP+BL, Customizado, CDI e Ibovespa."
+    )
+
+    st.markdown(
+        "<div style='font-size:12px;padding:8px 12px;border-radius:6px;"
+        "background:#f8f7f4;border-left:3px solid #378ADD;margin-bottom:1rem'>"
+        "<strong>Exemplos de tickers Yahoo Finance:</strong> "
+        "<code>PETR4.SA</code> (Petrobras) · <code>VALE3.SA</code> (Vale) · "
+        "<code>ITUB4.SA</code> (Itaú) · <code>BOVA11.SA</code> (ETF Ibovespa) · "
+        "<code>IVVB11.SA</code> (ETF S&P500) · <code>AAPL</code> (Apple) · "
+        "<code>SPY</code> (S&P500 ETF) · <code>GLD</code> (ouro)"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+    # ── Estado inicial do portfólio livre ─────────────────────────────────────
+    if "pl_ativos" not in st.session_state:
+        st.session_state["pl_ativos"] = [
+            {"ticker": "BOVA11.SA", "tipo": "Yahoo", "peso": 30.0},
+            {"ticker": "IRF-M",     "tipo": "ANBIMA", "peso": 40.0},
+            {"ticker": "IVVB11.SA", "tipo": "Yahoo", "peso": 30.0},
+        ]
+
+    st.markdown("#### 1. Componha a carteira")
+
+    # Interface para adicionar ativos
+    col_add1, col_add2, col_add3, col_add4 = st.columns([2, 1.5, 1, 1])
+    with col_add1:
+        novo_ticker = st.text_input("Ticker ou ativo ANBIMA", key="pl_novo_ticker",
+                                     placeholder="Ex: PETR4.SA ou IRF-M")
+    with col_add2:
+        nomes_anbima = [cfg["name"] for cfg in ASSET_CFG]
+        tipo_novo = st.selectbox("Tipo", ["Yahoo Finance", "ANBIMA"], key="pl_tipo_novo")
+    with col_add3:
+        peso_novo = st.number_input("Peso (%)", 0.0, 100.0, 10.0, 5.0, key="pl_peso_novo")
+    with col_add4:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("➕ Adicionar", key="pl_add"):
+            if novo_ticker:
+                st.session_state["pl_ativos"].append({
+                    "ticker": novo_ticker.strip().upper() if tipo_novo == "Yahoo Finance" else novo_ticker.strip(),
+                    "tipo": "Yahoo" if tipo_novo == "Yahoo Finance" else "ANBIMA",
+                    "peso": peso_novo
+                })
+                st.rerun()
+
+    # Mostrar ativos atuais com opção de remover
+    if st.session_state["pl_ativos"]:
+        st.markdown("**Carteira montada:**")
+        total_peso = sum(a["peso"] for a in st.session_state["pl_ativos"])
+
+        for i, ativo in enumerate(st.session_state["pl_ativos"]):
+            col_r1, col_r2, col_r3, col_r4 = st.columns([2, 1.5, 1, 0.5])
+            col_r1.markdown(f"**{ativo['ticker']}**")
+            col_r2.markdown(f"<span style='color:#888780'>{ativo['tipo']}</span>",
+                            unsafe_allow_html=True)
+            col_r3.markdown(f"{ativo['peso']:.1f}%")
+            if col_r4.button("🗑️", key=f"pl_del_{i}"):
+                st.session_state["pl_ativos"].pop(i)
+                st.rerun()
+
+        # Aviso sobre soma dos pesos
+        cor_soma = "#1D9E75" if abs(total_peso - 100) < 0.1 else "#E24B4A"
+        st.markdown(
+            f"<div style='font-size:13px;color:{cor_soma};font-weight:600;margin-top:8px'>"
+            f"Soma dos pesos: {total_peso:.1f}%"
+            f"{' ✅' if abs(total_peso-100)<0.1 else ' ⚠️ (deve somar 100%)'}</div>",
+            unsafe_allow_html=True
+        )
+
+        col_b1, col_b2 = st.columns([1, 3])
+        with col_b1:
+            if st.button("🔄 Normalizar para 100%", key="pl_norm"):
+                if total_peso > 0:
+                    for a in st.session_state["pl_ativos"]:
+                        a["peso"] = round(a["peso"] / total_peso * 100, 1)
+                    st.rerun()
+        with col_b2:
+            if st.button("🗑️ Limpar tudo", key="pl_clear"):
+                st.session_state["pl_ativos"] = []
+                st.rerun()
+
+    st.divider()
+
+    # ── Rodar simulação ───────────────────────────────────────────────────────
+    st.markdown("#### 2. Rode a simulação")
+
+    if st.button("▶ Simular portfólio livre", key="pl_simular", type="primary"):
+        if not st.session_state["pl_ativos"]:
+            st.error("Adicione pelo menos um ativo à carteira.")
+        else:
+            total_peso = sum(a["peso"] for a in st.session_state["pl_ativos"])
+            if abs(total_peso - 100) > 0.5:
+                st.warning(f"⚠️ Os pesos somam {total_peso:.1f}%. "
+                           f"Clique em 'Normalizar para 100%' antes de simular.")
+            else:
+                with st.spinner("Buscando dados e calculando..."):
+                    try:
+                        # Coletar retornos de cada ativo
+                        rets_livres = {}
+                        erros = []
+
+                        for ativo in st.session_state["pl_ativos"]:
+                            ticker = ativo["ticker"]
+                            peso   = ativo["peso"] / 100
+
+                            if ativo["tipo"] == "ANBIMA":
+                                # Buscar da série ANBIMA já carregada
+                                if ticker in series:
+                                    r = series[ticker]["valor"].pct_change().dropna()
+                                    rets_livres[ticker] = (r, peso)
+                                else:
+                                    erros.append(f"{ticker} (ANBIMA não encontrado)")
+                            else:
+                                # Buscar do Yahoo Finance
+                                yf_data = fetch_yfinance(ticker, start="2009-01-01")
+                                if yf_data is not None and len(yf_data) > 12:
+                                    r = yf_data["valor"].pct_change().dropna()
+                                    rets_livres[ticker] = (r, peso)
+                                else:
+                                    erros.append(f"{ticker} (Yahoo Finance falhou)")
+
+                        if erros:
+                            st.warning("⚠️ Alguns ativos falharam: " + ", ".join(erros))
+
+                        if not rets_livres:
+                            st.error("Nenhum ativo válido para simular.")
+                        else:
+                            # Alinhar todos os retornos no índice comum
+                            idx_comum = None
+                            for r, _ in rets_livres.values():
+                                if idx_comum is None:
+                                    idx_comum = r.index
+                                else:
+                                    idx_comum = idx_comum.intersection(r.index)
+
+                            # Intersecção com o portfólio HRP+BL para comparar
+                            idx_comum = idx_comum.intersection(port_ret.index)
+
+                            if len(idx_comum) < 12:
+                                st.error("Histórico comum insuficiente (menos de 12 meses). "
+                                         "Alguns tickers podem ter começado recentemente.")
+                            else:
+                                # Calcular retorno da carteira livre
+                                port_livre = pd.Series(0.0, index=idx_comum)
+                                peso_total_valido = sum(p for _, p in rets_livres.values())
+                                for ticker, (r, peso) in rets_livres.items():
+                                    r_alinhado = r.reindex(idx_comum).fillna(0)
+                                    # Renormalizar peso pelos ativos válidos
+                                    port_livre += (peso / peso_total_valido) * r_alinhado
+
+                                # Alinhar benchmarks ao mesmo índice
+                                port_hrp_a  = port_ret.reindex(idx_comum).fillna(0)
+                                cdi_a       = cdi_aligned.reindex(idx_comum).fillna(0)
+                                ibov_a      = ibov_ret.reindex(idx_comum).fillna(0)
+
+                                # Métricas
+                                m_livre = metrics(port_livre, cdi_a)
+                                m_hrp_a = metrics(port_hrp_a, cdi_a)
+                                m_ibov_a= metrics(ibov_a, cdi_a)
+
+                                # Portfólio customizado (se configurado)
+                                custom_w = {cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}",
+                                            cfg["w"]*100)/100 for cfg in ASSET_CFG}
+                                tot_c = sum(custom_w.values())
+                                tem_custom = abs(tot_c - 1.0) < 0.02
+                                if tem_custom:
+                                    c_livre = sum(
+                                        custom_w[a["name"]] * series[a["name"]]["valor"]
+                                        .pct_change().dropna().reindex(idx_comum).fillna(0)
+                                        for a in ASSET_CFG
+                                    )
+                                    m_custom_a = metrics(c_livre, cdi_a)
+
+                                # ── Gráfico de retorno acumulado ──────────────
+                                st.markdown("#### 3. Resultado da comparação")
+
+                                cum_livre = (1 + port_livre).cumprod() * 100
+                                cum_hrp   = (1 + port_hrp_a).cumprod() * 100
+                                cum_cdi   = (1 + cdi_a).cumprod() * 100
+                                cum_ibov  = (1 + ibov_a).cumprod() * 100
+
+                                fig_livre = go.Figure()
+                                fig_livre.add_trace(go.Scatter(
+                                    x=cum_livre.index, y=cum_livre.values.round(1),
+                                    name="🧪 Portfólio livre",
+                                    line=dict(color="#9B59B6", width=3)))
+                                fig_livre.add_trace(go.Scatter(
+                                    x=cum_hrp.index, y=cum_hrp.values.round(1),
+                                    name="HRP+BL",
+                                    line=dict(color="#378ADD", width=2)))
+                                if tem_custom:
+                                    cum_custom = (1 + c_livre).cumprod() * 100
+                                    fig_livre.add_trace(go.Scatter(
+                                        x=cum_custom.index, y=cum_custom.values.round(1),
+                                        name="Customizado",
+                                        line=dict(color="#E67E22", width=2, dash="dot")))
+                                fig_livre.add_trace(go.Scatter(
+                                    x=cum_cdi.index, y=cum_cdi.values.round(1),
+                                    name="CDI",
+                                    line=dict(color="#1D9E75", width=1.5, dash="dash")))
+                                fig_livre.add_trace(go.Scatter(
+                                    x=cum_ibov.index, y=cum_ibov.values.round(1),
+                                    name="Ibovespa",
+                                    line=dict(color="#BA7517", width=1.5, dash="dash")))
+
+                                fig_livre.update_layout(
+                                    plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                                    height=400, font=dict(color="#1a1a18"),
+                                    margin=dict(l=0, r=0, t=8, b=0),
+                                    legend=dict(orientation="h", yanchor="bottom",
+                                                y=1.02, xanchor="left", x=0,
+                                                font=dict(color="#1a1a18")),
+                                    xaxis=dict(gridcolor="#e8e6e0",
+                                               tickfont=dict(color="#444441"), color="#1a1a18"),
+                                    yaxis=dict(ticksuffix="", gridcolor="#e8e6e0",
+                                               tickfont=dict(color="#444441"), color="#1a1a18",
+                                               title="Base 100"),
+                                )
+                                st.plotly_chart(fig_livre, use_container_width=True)
+
+                                periodo_txt = (f"{idx_comum[0].strftime('%b/%Y')} → "
+                                               f"{idx_comum[-1].strftime('%b/%Y')} "
+                                               f"({len(idx_comum)} meses)")
+                                st.caption(f"Período comparável: {periodo_txt}")
+
+                                # ── Tabela de métricas ────────────────────────
+                                st.markdown("#### 4. Métricas comparativas")
+
+                                def fmt_metricas(m, nome):
+                                    return {
+                                        "Portfólio":     nome,
+                                        "Retorno a.a.":  f"{m['ann_ret']*100:.2f}%",
+                                        "Volatilidade":  f"{m['ann_vol']*100:.2f}%",
+                                        "Sharpe":        f"{m['sharpe']:.3f}",
+                                        "Sortino":       f"{m['sortino']:.3f}" if not pd.isna(m['sortino']) else "—",
+                                        "Max DD":        f"{m['max_dd']*100:.2f}%",
+                                        "Calmar":        f"{m['calmar']:.3f}" if not pd.isna(m['calmar']) else "—",
+                                        "Acumulado":     f"{(m['cum'].iloc[-1]-1)*100:+.1f}%",
+                                    }
+
+                                linhas_m = [
+                                    fmt_metricas(m_livre, "🧪 Portfólio livre"),
+                                    fmt_metricas(m_hrp_a, "HRP+BL"),
+                                ]
+                                if tem_custom:
+                                    linhas_m.append(fmt_metricas(m_custom_a, "Customizado"))
+                                linhas_m.append(fmt_metricas(m_ibov_a, "Ibovespa"))
+
+                                df_metricas_livre = pd.DataFrame(linhas_m).set_index("Portfólio")
+                                st.dataframe(df_metricas_livre, use_container_width=True)
+
+                                # ── Insight automático ────────────────────────
+                                acum_livre = (m_livre["cum"].iloc[-1]-1)*100
+                                acum_hrp   = (m_hrp_a["cum"].iloc[-1]-1)*100
+                                diff_hrp   = acum_livre - acum_hrp
+
+                                if diff_hrp > 0:
+                                    st.success(
+                                        f"📊 No período, o **portfólio livre** rendeu "
+                                        f"**{acum_livre:+.1f}%** — superando o HRP+BL "
+                                        f"em **{diff_hrp:+.1f} p.p.** Porém, verifique se o "
+                                        f"Sharpe (retorno ajustado ao risco) também é superior — "
+                                        f"retorno maior com risco muito maior nem sempre compensa."
+                                    )
+                                else:
+                                    st.info(
+                                        f"📊 No período, o **portfólio livre** rendeu "
+                                        f"**{acum_livre:+.1f}%** vs **{acum_hrp:+.1f}%** do HRP+BL "
+                                        f"({diff_hrp:+.1f} p.p.). O HRP+BL entregou melhor "
+                                        f"resultado com a diversificação do modelo."
+                                    )
+
+                                # Comparar Sharpe
+                                if m_livre["sharpe"] > m_hrp_a["sharpe"]:
+                                    st.success(
+                                        f"✅ **Sharpe superior**: o portfólio livre tem Sharpe de "
+                                        f"{m_livre['sharpe']:.3f} vs {m_hrp_a['sharpe']:.3f} do HRP+BL — "
+                                        f"melhor retorno ajustado ao risco."
+                                    )
+                                else:
+                                    st.warning(
+                                        f"⚠️ **Sharpe inferior**: o portfólio livre tem Sharpe de "
+                                        f"{m_livre['sharpe']:.3f} vs {m_hrp_a['sharpe']:.3f} do HRP+BL. "
+                                        f"O modelo entrega melhor relação risco-retorno."
+                                    )
+
+                    except Exception as e:
+                        st.error(f"Erro na simulação: {e}")
+
+    st.divider()
+    st.caption(
+        "💡 Dica: tickers da B3 terminam em **.SA** (ex: PETR4.SA). "
+        "ETFs internacionais e ações americanas usam o ticker direto (ex: SPY, AAPL). "
+        "O período de comparação é limitado pelo ativo com histórico mais curto."
     )
 
 
