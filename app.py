@@ -196,13 +196,16 @@ div[data-testid="stHorizontalBlock"]{gap:12px}
 
 # ── Constantes ───────────────────────────────────────────────────────────────
 ASSET_CFG = [
-    {"name": "IRF-M",      "key": "IRFM",       "color": "#E24B4A", "cluster": "Renda fixa", "w": 0.268, "vol": 0.04},
-    {"name": "IMA-B5",     "key": "IMAB5",      "color": "#1D9E75", "cluster": "Renda fixa", "w": 0.100, "vol": 0.05},
-    {"name": "IMA-B5+",    "key": "IMAB5MAIS",  "color": "#0F6E56", "cluster": "Renda fixa", "w": 0.088, "vol": 0.09},
-    {"name": "IHFA",       "key": "IHFA",       "color": "#378ADD", "cluster": "Âncora",     "w": 0.172, "vol": 0.06},
-    {"name": "IDA-DI",     "key": "IDADI",      "color": "#888780", "cluster": "Âncora",     "w": 0.144, "vol": 0.02},
-    {"name": "Ibovespa",   "key": "IBOV",       "color": "#BA7517", "cluster": "Equity",     "w": 0.145, "vol": 0.24},
-    {"name": "Internac.",  "key": "INTL",       "color": "#7F77DD", "cluster": "Equity",     "w": 0.083, "vol": 0.184},
+    {"name": "IRF-M",      "key": "IRFM",       "color": "#E24B4A", "cluster": "Renda fixa", "w": 0.230, "vol": 0.04},
+    {"name": "IMA-B5",     "key": "IMAB5",      "color": "#1D9E75", "cluster": "Renda fixa", "w": 0.090, "vol": 0.05},
+    {"name": "IMA-B5+",    "key": "IMAB5MAIS",  "color": "#0F6E56", "cluster": "Renda fixa", "w": 0.078, "vol": 0.09},
+    {"name": "IDkA Pré 2A","key": "IDKAPRE2",   "color": "#C94F9E", "cluster": "Renda fixa", "w": 0.080, "vol": 0.03},
+    {"name": "IHFA",       "key": "IHFA",       "color": "#378ADD", "cluster": "Âncora",     "w": 0.150, "vol": 0.06},
+    {"name": "IDA-DI",     "key": "IDADI",      "color": "#888780", "cluster": "Âncora",     "w": 0.130, "vol": 0.02},
+    {"name": "Ibovespa",   "key": "IBOV",       "color": "#BA7517", "cluster": "Equity",     "w": 0.115, "vol": 0.24},
+    {"name": "Internac.",  "key": "INTL",       "color": "#7F77DD", "cluster": "Equity",     "w": 0.070, "vol": 0.184},
+    {"name": "Ouro",       "key": "GOLD",       "color": "#D4AF37", "cluster": "Alternativos","w": 0.037, "vol": 0.15},
+    {"name": "Bitcoin",    "key": "BTC",        "color": "#F7931A", "cluster": "Alternativos","w": 0.020, "vol": 0.65},
 ]
 WEIGHTS = {a["name"]: a["w"] for a in ASSET_CFG}
 
@@ -505,12 +508,32 @@ def align_and_compute(series_dict, cdi_df, start="2009-01-31", end=None, weights
         s = s[s.index <= end]
         rets[k] = s["valor"].pct_change().dropna()
 
-    common = rets[list(rets.keys())[0]].index
-    for r in rets.values():
-        common = common.intersection(r.index)
+    # Ativos de histórico curto (Bitcoin, Ouro) não devem encurtar o período total.
+    # Usa como base os ativos "core" (renda fixa + equity tradicional) e trata os
+    # alternativos com retorno 0 antes de existirem.
+    CORE_ASSETS = ["IRF-M","IMA-B5","IMA-B5+","IDkA Pré 2A","IHFA","IDA-DI","Ibovespa","Internac."]
+    core_presentes = [k for k in CORE_ASSETS if k in rets]
+    if core_presentes:
+        common = rets[core_presentes[0]].index
+        for k in core_presentes:
+            common = common.intersection(rets[k].index)
+    else:
+        common = rets[list(rets.keys())[0]].index
+        for r in rets.values():
+            common = common.intersection(r.index)
 
-    port_ret = sum(weights.get(k, WEIGHTS.get(k, 0)) * rets[k].reindex(common).ffill()
-                   for k in weights if k in rets)
+    # Para alternativos (Ouro, Bitcoin), preencher com 0 antes de existirem
+    port_ret = pd.Series(0.0, index=common)
+    for k in weights:
+        if k not in rets:
+            continue
+        w_k = weights.get(k, WEIGHTS.get(k, 0))
+        if k in CORE_ASSETS:
+            port_ret = port_ret + w_k * rets[k].reindex(common).ffill().fillna(0)
+        else:
+            # Alternativo: retorno 0 nos meses em que ainda não existia
+            r_alt = rets[k].reindex(common).fillna(0)
+            port_ret = port_ret + w_k * r_alt
     cdi_aligned = cdi_df["valor"].reindex(common).ffill()
 
     return port_ret, cdi_aligned, common
@@ -549,13 +572,16 @@ PERFIS = {
         "desc": "Vol alvo 0.5%-1.0% a.a. | CDI + 0.3% a 0.8%",
         "cor": "#1D9E75",
         "bandas": {
-            "IRF-M":    (0.0,  8.0),
-            "IMA-B5":   (0.0,  8.0),
-            "IMA-B5+":  (0.0,  3.0),
-            "IHFA":     (0.0,  5.0),
-            "IDA-DI":   (65.0, 90.0),
-            "Ibovespa": (0.0,  2.0),
-            "Internac.":(0.0,  2.0),
+            "IRF-M":       (0.0,  8.0),
+            "IMA-B5":      (0.0,  8.0),
+            "IMA-B5+":     (0.0,  3.0),
+            "IDkA Pré 2A": (0.0, 15.0),
+            "IHFA":        (0.0,  5.0),
+            "IDA-DI":      (55.0, 85.0),
+            "Ibovespa":    (0.0,  2.0),
+            "Internac.":   (0.0,  2.0),
+            "Ouro":        (0.0,  3.0),
+            "Bitcoin":     (0.0,  0.0),
         },
     },
     "Moderado": {
@@ -563,13 +589,16 @@ PERFIS = {
         "desc": "Vol alvo 2%-3.5% a.a. | CDI + 1% a 2%",
         "cor": "#C4770A",
         "bandas": {
-            "IRF-M":    (10.0, 30.0),
-            "IMA-B5":   (5.0,  16.0),
-            "IMA-B5+":  (3.0,  12.0),
-            "IHFA":     (10.0, 22.0),
-            "IDA-DI":   (18.0, 38.0),
-            "Ibovespa": (3.0,  15.0),
-            "Internac.":(2.0,  10.0),
+            "IRF-M":       (10.0, 26.0),
+            "IMA-B5":      (5.0,  16.0),
+            "IMA-B5+":     (3.0,  12.0),
+            "IDkA Pré 2A": (3.0,  15.0),
+            "IHFA":        (10.0, 22.0),
+            "IDA-DI":      (15.0, 35.0),
+            "Ibovespa":    (3.0,  15.0),
+            "Internac.":   (2.0,  10.0),
+            "Ouro":        (0.0,   6.0),
+            "Bitcoin":     (0.0,   3.0),
         },
     },
     "Agressivo": {
@@ -577,13 +606,16 @@ PERFIS = {
         "desc": "Vol alvo acima de 5% a.a. | CDI + 2% a 4%",
         "cor": "#E24B4A",
         "bandas": {
-            "IRF-M":    (5.0,  20.0),
-            "IMA-B5":   (3.0,  12.0),
-            "IMA-B5+":  (3.0,  15.0),
-            "IHFA":     (10.0, 25.0),
-            "IDA-DI":   (0.0,  10.0),
-            "Ibovespa": (20.0, 40.0),
-            "Internac.":(10.0, 30.0),
+            "IRF-M":       (5.0,  16.0),
+            "IMA-B5":      (3.0,  12.0),
+            "IMA-B5+":     (3.0,  15.0),
+            "IDkA Pré 2A": (0.0,  10.0),
+            "IHFA":        (10.0, 25.0),
+            "IDA-DI":      (0.0,  10.0),
+            "Ibovespa":    (18.0, 38.0),
+            "Internac.":   (8.0,  28.0),
+            "Ouro":        (0.0,   8.0),
+            "Bitcoin":     (0.0,   8.0),
         },
     },
 }
@@ -743,8 +775,11 @@ def load_demo_series():
         idx = pd.date_range("2009-01-31", periods=n, freq="ME")
         return pd.DataFrame({"valor": arr}, index=idx)
     params = [(0.085,0.04,208,1),(0.090,0.045,208,2),(0.100,0.09,208,7),
-              (0.085,0.06,208,3),(0.125,0.02,208,4),(0.092,0.238,208,5),(0.118,0.184,208,6)]
-    keys = ["IRF-M","IMA-B5","IMA-B5+","IHFA","IDA-DI","Ibovespa","Internac."]
+              (0.088,0.03,208,8),(0.085,0.06,208,3),(0.125,0.02,208,4),
+              (0.092,0.238,208,5),(0.118,0.184,208,6),
+              (0.080,0.15,208,9),(0.45,0.65,208,10)]
+    keys = ["IRF-M","IMA-B5","IMA-B5+","IDkA Pré 2A","IHFA","IDA-DI",
+            "Ibovespa","Internac.","Ouro","Bitcoin"]
     return {k: gen(*p) for k,p in zip(keys, params)}
 
 with st.spinner("Carregando dados e conectando ao Banco Central…"):
@@ -779,6 +814,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
         "IMA-B5+":   "IMAB5MAIS",
         "IHFA":      "IHFA",
         "IDA-DI":    "IDADI",
+        "IDkA Pré 2A": "IDKAPRE2",
         "Ibovespa":  "Ibovespa",
     }
 
@@ -786,8 +822,8 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     daily_series_anbima = {}
 
     for cfg in ASSET_CFG:
-        if cfg["key"] == "INTL":
-            continue
+        if cfg["key"] in ["INTL", "GOLD", "BTC"]:
+            continue  # carregados separadamente via Yahoo Finance
         nome = cfg["name"]
 
         # 1. Upload manual (prioridade máxima)
@@ -881,12 +917,45 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     else:
         series["Internac."] = demo["Internac."]
 
+    # ── Ouro (GLD em USD → BRL via PTAX) ──────────────────────────────────────
+    gold_yf = fetch_yfinance("GLD", start="2005-01-01")
+    if gold_yf is not None and len(gold_yf) > 12:
+        gold_m = to_monthly(gold_yf)
+        if ptax_data is not None:
+            # Converter retorno USD para BRL
+            g_ret = gold_m["valor"].pct_change()
+            ptax_r = ptax_data["retorno"].reindex(g_ret.index).ffill().fillna(0)
+            g_brl = (1 + g_ret) * (1 + ptax_r) - 1
+            g_cum = 100 * (1 + g_brl.fillna(0)).cumprod()
+            series["Ouro"] = pd.DataFrame({"valor": g_cum.values}, index=g_cum.index)
+        else:
+            series["Ouro"] = gold_m
+        has_real = True
+    else:
+        series["Ouro"] = demo["Ouro"]
+
+    # ── Bitcoin (BTC-USD → BRL via PTAX) ──────────────────────────────────────
+    btc_yf = fetch_yfinance("BTC-USD", start="2014-09-01")
+    if btc_yf is not None and len(btc_yf) > 12:
+        btc_m = to_monthly(btc_yf)
+        if ptax_data is not None:
+            b_ret = btc_m["valor"].pct_change()
+            ptax_r2 = ptax_data["retorno"].reindex(b_ret.index).ffill().fillna(0)
+            b_brl = (1 + b_ret) * (1 + ptax_r2) - 1
+            b_cum = 100 * (1 + b_brl.fillna(0)).cumprod()
+            series["Bitcoin"] = pd.DataFrame({"valor": b_cum.values}, index=b_cum.index)
+        else:
+            series["Bitcoin"] = btc_m
+        has_real = True
+    else:
+        series["Bitcoin"] = demo["Bitcoin"]
+
     # ── Séries diárias para monitoramento ────────────────────────────────────
     # Carrega as séries no formato diário (sem agregar para mensal)
     daily_series = {}
-    DAILY_FILES = {"IRF-M":"IRFM","IMA-B5":"IMAB5","IMA-B5+":"IMAB5MAIS","IHFA":"IHFA","IDA-DI":"IDADI"}
+    DAILY_FILES = {"IRF-M":"IRFM","IMA-B5":"IMAB5","IMA-B5+":"IMAB5MAIS","IHFA":"IHFA","IDA-DI":"IDADI","IDkA Pré 2A":"IDKAPRE2"}
     for cfg in ASSET_CFG:
-        if cfg["key"] in ["IBOV","INTL"]:
+        if cfg["key"] in ["IBOV","INTL","GOLD","BTC"]:
             continue
         nome = cfg["name"]
         f_up = uploads.get(nome)
@@ -978,7 +1047,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
             if vol_perfil_calc > vol_max_p:
                 fator = vol_max_p / vol_perfil_calc
                 pesos_ajust = {k: float(v) for k, v in pesos_perfil.items()}
-                for nome in ["Ibovespa","Internac.","IRF-M","IMA-B5","IMA-B5+"]:
+                for nome in ["Ibovespa","Internac.","Bitcoin","Ouro","IRF-M","IMA-B5","IMA-B5+"]:
                     pesos_ajust[nome] = pesos_ajust.get(nome, 0) * fator
                 excesso = 1.0 - sum(pesos_ajust.values())
                 pesos_ajust["IDA-DI"] = pesos_ajust.get("IDA-DI",0) + excesso * 0.7
@@ -1763,6 +1832,9 @@ def gerar_pdf_cliente(dados):
     story.append(Paragraph("Como seu dinheiro está dividido", section_style))
     pesos_simple = [["Tipo de investimento", "Percentual", "Função"]]
     funcoes = {
+        "IDkA Pré 2A": "Prefixado de duration curta constante — juros de curto prazo",
+        "Ouro":     "Ouro (GLD) em dólar — hedge contra crises e inflação",
+        "Bitcoin":  "Bitcoin — micro-alocação de alto risco e potencial assimétrico",
         "IRF-M":    "Renda fixa prefixada — protege contra queda de juros",
         "IMA-B5":   "NTN-B até 5 anos — proteção inflacionária com duration curta",
         "IMA-B5+":  "NTN-B acima de 5 anos — proteção inflacionária com duration longa",
@@ -1906,10 +1978,22 @@ tanto o que os dados históricos dizem quanto o que você acredita que vai acont
              "Índice das **ações** mais negociadas na B3. "
              "Representa o mercado acionário brasileiro. Alta volatilidade mas "
              "potencial de retorno superior no longo prazo. Descorrelacionado da renda fixa."),
-            ("Internacional", "Equity", "#7F77DD", "8.3%", "Yahoo Finance (SPY + TLT)",
+            ("Internacional", "Equity", "#7F77DD", "7.0%", "Yahoo Finance (SPY + TLT)",
              "**40% SPY** (S&P 500) + **60% TLT** (Treasuries 20 anos), convertidos para BRL via PTAX. "
              "Diversificação geográfica e proteção cambial — quando o Brasil vai mal, "
              "o dólar sobe e amplifica o retorno desta parcela em reais."),
+            ("IDkA Pré 2A", "Renda fixa", "#C94F9E", "8.0%", "ANBIMA",
+             "Índice de Duração Constante ANBIMA **prefixado com duration fixa de 2 anos**. "
+             "Diferente do IRF-M (duration variável), mantém sempre ~2 anos — "
+             "exposição controlada e estável a juros prefixados de curto prazo."),
+            ("Ouro", "Alternativos", "#D4AF37", "3.7%", "Yahoo Finance (GLD)",
+             "ETF de ouro (**GLD**) em dólar, convertido para BRL via PTAX. "
+             "Hedge clássico contra crises e inflação — tende a subir quando ações caem "
+             "e quando há stress geopolítico. Correlação baixa com renda fixa e ações."),
+            ("Bitcoin", "Alternativos", "#F7931A", "2.0%", "Yahoo Finance (BTC-USD)",
+             "Bitcoin em dólar, convertido para BRL via PTAX. **Ativo de altíssima volatilidade** "
+             "(~65% a.a.) e histórico curto (desde 2014). Micro-alocação para capturar "
+             "potencial assimétrico de valorização — o peso pequeno limita o risco ao portfólio."),
         ]
         for nome, cluster, cor, peso, fonte, desc in ativos_info:
             st.markdown(
@@ -2057,7 +2141,7 @@ with tab1:
     custom_cum = (1 + custom_ret).cumprod() * 100
 
     # Calcular 1/N
-    eq_ret = sum((1/6) * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+    eq_ret = sum((1/len(ASSET_CFG)) * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
                  for a in ASSET_CFG)
     eq_cum = (1 + eq_ret).cumprod() * 100
 
@@ -3220,6 +3304,9 @@ with tab5:
         "IRF-M":     round(ret_pre,       2),
         "IMA-B5":    round(ret_ima_b5,    2),
         "IMA-B5+":   round(ret_ima_b5p,   2),
+        "IDkA Pré 2A": round(ret_pre * 0.85, 2),
+        "Ouro":      round(max(-15, min(30, 8 + (ipca-4)*1.5 - delta_selic*1.2)), 2),
+        "Bitcoin":   round(max(-40, min(80, 20 + (pib-2)*8 - delta_selic*2)), 2),
         "IHFA":      round(ret_ihfa,      2),
         "IDA-DI":    round(ret_ida_geral, 2),
         "Ibovespa":  round(ret_ibov,      2),
@@ -3242,7 +3329,7 @@ with tab5:
     # ── Retornos totais ponderados ──
     port_ret_sc    = sum(WEIGHTS_ATIVO.get(k, WEIGHTS.get(k,0)) * v for k, v in asset_rets.items())
     custom_ret_sc  = sum(custom_w_sc[k] * v for k, v in asset_rets.items()) if custom_valid_sc else None
-    equal_ret_sc   = sum((1/6) * v for v in asset_rets.values())
+    equal_ret_sc   = sum((1/len(asset_rets)) * v for v in asset_rets.values())
     premium_sc     = port_ret_sc - selic
     sharpe_sc      = premium_sc / (m_port["ann_vol"] * 100)
 
@@ -3692,7 +3779,7 @@ with tab6:
         r_cdi  = period_ret(cdi_cum,     ev["start"], ev["end"])
         r_ibov = period_ret(ibov_cum,    ev["start"], ev["end"])
         r_cust = period_ret(custom_cum_ev, ev["start"], ev["end"])
-        eq_cum_ev = (1 + sum((1/6)*series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+        eq_cum_ev = (1 + sum((1/len(ASSET_CFG))*series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
                               for a in ASSET_CFG)).cumprod() * 100
         r_igual = period_ret(eq_cum_ev, ev["start"], ev["end"])
 
@@ -4878,7 +4965,7 @@ with tab10:
         )
 
     # 1/N igual
-    eq_ret_jm = sum((1/6) * series[a["name"]]["valor"]
+    eq_ret_jm = sum((1/len(ASSET_CFG)) * series[a["name"]]["valor"]
                     .pct_change().dropna().reindex(common_idx).ffill()
                     for a in ASSET_CFG)
 
