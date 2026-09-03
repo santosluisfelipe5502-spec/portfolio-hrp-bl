@@ -1243,6 +1243,50 @@ else:
                 "color:#888780;margin:8px 0 6px'>Portfólio customizado — ajuste os pesos na aba Rebalanceamento</div>",
                 unsafe_allow_html=True)
 
+# ── KPIs do Portfólio Livre (se simulado) ─────────────────────────────────────
+if st.session_state.get("pl_port_ret") is not None:
+    _pl_ret = st.session_state["pl_port_ret"]
+    _pl_idx = _pl_ret.index.intersection(cdi_aligned.index)
+    if len(_pl_idx) > 12:
+        _pl_r   = _pl_ret.reindex(_pl_idx).fillna(0)
+        _pl_cdi = cdi_aligned.reindex(_pl_idx).fillna(0)
+        _m_pl   = metrics(_pl_r, _pl_cdi)
+        _pl_comp = " · ".join(st.session_state.get("pl_composicao", [])[:6])
+
+        st.markdown(
+            "<div style='font-size:11px;font-weight:500;letter-spacing:.06em;"
+            "text-transform:uppercase;color:#9B59B6;margin:8px 0 6px'>"
+            "🧪 Portfólio livre — simulado na aba Portfólio livre</div>",
+            unsafe_allow_html=True
+        )
+        if _pl_comp:
+            st.markdown(
+                f"<div style='font-size:11px;color:#888780;margin-bottom:6px'>{_pl_comp}</div>",
+                unsafe_allow_html=True
+            )
+
+        pl1, pl2, pl3, pl4, pl5, pl6, pl7 = st.columns(7)
+        _acum_pl = (_m_pl["cum"].iloc[-1]-1)*100
+        _premio_cdi_pl = (_m_pl["ann_ret"] - rf_ann)*100
+        pl1.markdown(kpi("Acumulado", f"+{_acum_pl:.1f}%",
+            f"CDI + {_premio_cdi_pl:.2f}% a.a.",
+            "pos" if _acum_pl >= acum_port else "warn"), unsafe_allow_html=True)
+        pl2.markdown(kpi("Retorno a.a.", f"{_m_pl['ann_ret']*100:.2f}%",
+            f"HRP+BL {(_m_pl['ann_ret']-m_port['ann_ret'])*100:+.1f}%"), unsafe_allow_html=True)
+        _cls_vol_pl = "good" if _m_pl["ann_vol"] <= m_port["ann_vol"] else "warn"
+        pl3.markdown(kpi("Volatilidade a.a.", f"{_m_pl['ann_vol']*100:.2f}%",
+            f"HRP+BL {m_port['ann_vol']*100:.1f}%", _cls_vol_pl), unsafe_allow_html=True)
+        _cls_sh_pl = "pos" if _m_pl["sharpe"] >= m_port["sharpe"] else "warn"
+        pl4.markdown(kpi("Sharpe (rf=CDI)", f"{_m_pl['sharpe']:.3f}",
+            f"HRP+BL {m_port['sharpe']:.3f}", _cls_sh_pl), unsafe_allow_html=True)
+        pl5.markdown(kpi("Sortino", f"{_m_pl['sortino']:.3f}" if not pd.isna(_m_pl['sortino']) else "—",
+            "penaliza só quedas"), unsafe_allow_html=True)
+        _cls_dd_pl = "pos" if _m_pl["max_dd"] >= m_port["max_dd"] else "warn"
+        pl6.markdown(kpi("Max Drawdown", f"{_m_pl['max_dd']*100:.2f}%",
+            f"HRP+BL {m_port['max_dd']*100:.1f}%", _cls_dd_pl), unsafe_allow_html=True)
+        pl7.markdown(kpi("Calmar Ratio", f"{_m_pl['calmar']:.3f}" if not pd.isna(_m_pl['calmar']) else "—",
+            f"HRP+BL {m_port['calmar']:.3f}"), unsafe_allow_html=True)
+
 st.divider()
 
 
@@ -2083,6 +2127,16 @@ with tab1:
         fig.add_trace(go.Scatter(x=ipca6_f.index, y=ipca6_f.values.round(2),
             name="IPCA", line=dict(color="#C4770A", width=1.5, dash="longdashdot")))
 
+    # ── Portfólio Livre (se simulado na aba Portfólio livre) ──
+    if st.session_state.get("pl_port_ret") is not None:
+        pl_ret = st.session_state["pl_port_ret"]
+        pl_cum = (1 + pl_ret).cumprod() * 100
+        pl_f = rebase(pl_cum, idx_filtrado)
+        if pl_f is not None and len(pl_f) > 0:
+            fig.add_trace(go.Scatter(x=pl_f.index, y=pl_f.values.round(2),
+                name="🧪 Portfólio livre",
+                line=dict(color="#9B59B6", width=2.5)))
+
     # ── Marcações de eventos de cauda ──
     # Filtrar apenas eventos dentro do período selecionado
     data_ini = idx_filtrado[0]  if len(idx_filtrado) > 0 else port_cum.index[0]
@@ -2265,6 +2319,19 @@ with tab2:
     elif show_cust_dd and not custom_valid_dd:
         st.caption("⚠️ Configure os pesos na aba Rebalanceamento para ver o drawdown customizado.")
 
+    # ── Portfólio Livre no drawdown ──
+    if st.session_state.get("pl_port_ret") is not None:
+        pl_ret = st.session_state["pl_port_ret"]
+        pl_cum_dd = (1 + pl_ret).cumprod()
+        pl_dd = (pl_cum_dd - pl_cum_dd.cummax()) / pl_cum_dd.cummax() * 100
+        pl_dd_f = pl_dd.reindex(dd_port_f.index).ffill() if len(dd_port_f) > 0 else pl_dd
+        fig_dd.add_trace(go.Scatter(
+            x=pl_dd_f.index, y=pl_dd_f.values.round(2),
+            name="🧪 Portfólio livre", fill="tozeroy",
+            line=dict(color="#9B59B6", width=1.8),
+            fillcolor="rgba(155,89,182,0.10)",
+            hovertemplate="%{x|%b/%Y}<br>DD: %{y:.2f}%<extra>Portfólio livre</extra>"))
+
     fig_dd.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
         font=dict(color="#1a1a18"),
@@ -2328,6 +2395,26 @@ with tab3:
     }
     df_metrics = pd.DataFrame(rows, index=["HRP+BL","CDI","Ibovespa","IPCA"]).T
     df_metrics.index.name = "Métrica"
+
+    # Adicionar coluna do Portfólio Livre se simulado
+    if st.session_state.get("pl_port_ret") is not None:
+        _pl_ret2 = st.session_state["pl_port_ret"]
+        _pl_idx2 = _pl_ret2.index.intersection(cdi_aligned.index)
+        if len(_pl_idx2) > 12:
+            _pl_r2   = _pl_ret2.reindex(_pl_idx2).fillna(0)
+            _pl_cdi2 = cdi_aligned.reindex(_pl_idx2).fillna(0)
+            _m_pl2   = metrics(_pl_r2, _pl_cdi2)
+            _acum_pl2 = (_m_pl2["cum"].iloc[-1]-1)*100
+            df_metrics["🧪 Port. livre"] = [
+                f"{_m_pl2['ann_ret']*100:.2f}%",
+                f"{_m_pl2['ann_vol']*100:.2f}%",
+                f"{_m_pl2['sharpe']:.3f}",
+                f"{_m_pl2['sortino']:.3f}" if not pd.isna(_m_pl2['sortino']) else "—",
+                f"{_m_pl2['max_dd']*100:.2f}%",
+                f"{_m_pl2['calmar']:.3f}" if not pd.isna(_m_pl2['calmar']) else "—",
+                f"+{_acum_pl2:.1f}%",
+            ]
+
     st.dataframe(df_metrics, use_container_width=True)
 
     st.caption(
@@ -5807,6 +5894,13 @@ with tab13:
                                     # Renormalizar peso pelos ativos válidos
                                     port_livre += (peso / peso_total_valido) * r_alinhado
 
+                                # Salvar no session_state para uso nas outras abas
+                                st.session_state["pl_port_ret"] = port_livre
+                                st.session_state["pl_composicao"] = [
+                                    f"{a['ticker']} {a['peso']:.0f}%"
+                                    for a in st.session_state["pl_ativos"]
+                                ]
+
                                 # Alinhar benchmarks ao mesmo índice
                                 port_hrp_a  = port_ret.reindex(idx_comum).fillna(0)
                                 cdi_a       = cdi_aligned.reindex(idx_comum).fillna(0)
@@ -5943,8 +6037,23 @@ with tab13:
                                         f"O modelo entrega melhor relação risco-retorno."
                                     )
 
+                                # Aviso de propagação para outras abas
+                                st.success(
+                                    "✅ **Portfólio livre salvo!** Ele agora aparece como "
+                                    "linha roxa nos gráficos de **Retorno acumulado** e "
+                                    "**Drawdown**, e nos **KPIs do topo** e na tabela de "
+                                    "**Métricas**. Navegue pelas abas para comparar."
+                                )
+
                     except Exception as e:
                         st.error(f"Erro na simulação: {e}")
+
+    # Botão para remover o portfólio livre das outras abas
+    if st.session_state.get("pl_port_ret") is not None:
+        if st.button("🗑️ Remover portfólio livre das outras abas", key="pl_remove_global"):
+            st.session_state["pl_port_ret"] = None
+            st.session_state.pop("pl_composicao", None)
+            st.rerun()
 
     st.divider()
     st.caption(
