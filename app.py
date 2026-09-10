@@ -193,6 +193,22 @@ label,.stSlider label,.stCheckbox label,.stSelectbox label,
 [data-testid="stRadio"] label{color:#1a1a18 !important}
 [data-baseweb="select"]{background:#ffffff !important}
 [data-baseweb="select"]>div{background:#ffffff !important;color:#1a1a18 !important}
+/* ── Menu dropdown ABERTO (lista de opções) — reforço total ── */
+div[data-baseweb="popover"]{background:#ffffff !important}
+div[data-baseweb="popover"] *{background-color:#ffffff !important;color:#1a1a18 !important}
+div[data-baseweb="popover"] div{background:#ffffff !important;color:#1a1a18 !important}
+div[data-baseweb="popover"] li{background:#ffffff !important;color:#1a1a18 !important}
+div[data-baseweb="popover"] ul{background:#ffffff !important}
+div[role="listbox"]{background:#ffffff !important}
+div[role="listbox"] *{background:#ffffff !important;color:#1a1a18 !important}
+div[role="option"]{background:#ffffff !important;color:#1a1a18 !important}
+div[role="option"]:hover{background:#EAF3DE !important;color:#1a1a18 !important}
+div[role="option"][aria-selected="true"]{background:#E6F1FB !important;color:#185FA5 !important}
+ul[data-testid="stSelectboxVirtualDropdown"]{background:#ffffff !important}
+ul[data-testid="stSelectboxVirtualDropdown"] li{background:#ffffff !important;color:#1a1a18 !important}
+ul[data-testid="stSelectboxVirtualDropdown"] li:hover{background:#EAF3DE !important}
+[data-baseweb="menu"] li{background:#ffffff !important;color:#1a1a18 !important}
+[data-baseweb="menu"] li:hover{background:#EAF3DE !important;color:#1a1a18 !important}
 [data-baseweb="popover"],[data-baseweb="menu"]{background:#ffffff !important}
 [data-baseweb="popover"] *,[data-baseweb="menu"] *{color:#1a1a18 !important;background:#ffffff !important}
 [data-baseweb="option"]{background:#ffffff !important;color:#1a1a18 !important}
