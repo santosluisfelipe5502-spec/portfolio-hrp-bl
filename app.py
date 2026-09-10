@@ -865,16 +865,34 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
                 continue
 
         # 3. Arquivo na pasta dados/ do repositório
-        repo_df, repo_path = load_from_repo(REPO_FILES.get(nome, nome))
+        _fname = REPO_FILES.get(nome, nome)
+        repo_df, repo_path = load_from_repo(_fname)
         if repo_df is not None:
             raw = read_from_df(repo_df, repo_path)
             if raw is not None:
-                # Guardar série diária para uso no drawdown e monitoramento
                 daily_series_anbima[nome] = raw
-                # Agregar para mensal para HRP e métricas
                 series[nome] = to_monthly(raw)
                 has_real = True
+                # Diagnóstico: registrar sucesso e colunas
+                if "_diag_load" not in st.session_state:
+                    st.session_state["_diag_load"] = {}
+                st.session_state["_diag_load"][nome] = (
+                    f"✅ lido de {repo_path} | colunas: {list(repo_df.columns)[:4]}"
+                )
                 continue
+            else:
+                if "_diag_load" not in st.session_state:
+                    st.session_state["_diag_load"] = {}
+                st.session_state["_diag_load"][nome] = (
+                    f"⚠️ arquivo {repo_path} encontrado mas read_from_df falhou | "
+                    f"colunas: {list(repo_df.columns)[:4]}"
+                )
+        else:
+            if "_diag_load" not in st.session_state:
+                st.session_state["_diag_load"] = {}
+            st.session_state["_diag_load"][nome] = (
+                f"❌ arquivo não encontrado (procurou por '{_fname}' em dados/, data/, raiz)"
+            )
 
         # 4. Fallback: dados simulados
         series[nome] = demo[nome]
@@ -1188,6 +1206,12 @@ with col_h1:
         st.caption("Ativos ANBIMA que terminam em 'Apr/2026' com 208 pts = dados SIMULADOS "
                    "(arquivo não lido). Se terminam em 'Sep/2026' = dados REAIS. "
                    "Ibovespa/Internac./Ouro/Bitcoin vêm do Yahoo e podem variar.")
+
+        st.markdown("---")
+        st.markdown("**Detalhe da leitura dos arquivos ANBIMA:**")
+        for _n, _msg in st.session_state.get("_diag_load", {}).items():
+            st.markdown(f"<span style='font-family:monospace;font-size:11px'>"
+                        f"<b>{_n}</b>: {_msg}</span>", unsafe_allow_html=True)
 with col_h2:
     perfil_badge_cor = {
         "HRP+BL Original": "badge-blue",
