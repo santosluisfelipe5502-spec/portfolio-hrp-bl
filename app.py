@@ -196,7 +196,7 @@ div[data-testid="stHorizontalBlock"]{gap:12px}
 
 # ── Constantes ───────────────────────────────────────────────────────────────
 ASSET_CFG = [
-    {"name": "IRF-M",      "key": "IRFM",       "color": "#E24B4A", "cluster": "Renda fixa", "w": 0.230, "vol": 0.04},
+    {"name": "IDkA Pré 5A","key": "IDKAPRE5",   "color": "#E24B4A", "cluster": "Renda fixa", "w": 0.230, "vol": 0.06},
     {"name": "IMA-B5",     "key": "IMAB5",      "color": "#1D9E75", "cluster": "Renda fixa", "w": 0.090, "vol": 0.05},
     {"name": "IMA-B5+",    "key": "IMAB5MAIS",  "color": "#0F6E56", "cluster": "Renda fixa", "w": 0.078, "vol": 0.09},
     {"name": "IDkA Pré 2A","key": "IDKAPRE2",   "color": "#C94F9E", "cluster": "Renda fixa", "w": 0.080, "vol": 0.03},
@@ -511,7 +511,7 @@ def align_and_compute(series_dict, cdi_df, start="2009-01-31", end=None, weights
     # Ativos de histórico curto (Bitcoin, Ouro) não devem encurtar o período total.
     # Usa como base os ativos "core" (renda fixa + equity tradicional) e trata os
     # alternativos com retorno 0 antes de existirem.
-    CORE_ASSETS = ["IRF-M","IMA-B5","IMA-B5+","IDkA Pré 2A","IHFA","IDA-DI","Ibovespa","Internac."]
+    CORE_ASSETS = ["IDkA Pré 5A","IMA-B5","IMA-B5+","IDkA Pré 2A","IHFA","IDA-DI","Ibovespa","Internac."]
     core_presentes = [k for k in CORE_ASSETS if k in rets]
     if core_presentes:
         common = rets[core_presentes[0]].index
@@ -572,7 +572,7 @@ PERFIS = {
         "desc": "Vol alvo 0.5%-1.0% a.a. | CDI + 0.3% a 0.8%",
         "cor": "#1D9E75",
         "bandas": {
-            "IRF-M":       (0.0,  8.0),
+            "IDkA Pré 5A": (0.0,  8.0),
             "IMA-B5":      (0.0,  8.0),
             "IMA-B5+":     (0.0,  3.0),
             "IDkA Pré 2A": (0.0, 15.0),
@@ -589,7 +589,7 @@ PERFIS = {
         "desc": "Vol alvo 2%-3.5% a.a. | CDI + 1% a 2%",
         "cor": "#C4770A",
         "bandas": {
-            "IRF-M":       (10.0, 26.0),
+            "IDkA Pré 5A": (8.0, 24.0),
             "IMA-B5":      (5.0,  16.0),
             "IMA-B5+":     (3.0,  12.0),
             "IDkA Pré 2A": (3.0,  15.0),
@@ -606,7 +606,7 @@ PERFIS = {
         "desc": "Vol alvo acima de 5% a.a. | CDI + 2% a 4%",
         "cor": "#E24B4A",
         "bandas": {
-            "IRF-M":       (5.0,  16.0),
+            "IDkA Pré 5A": (5.0,  16.0),
             "IMA-B5":      (3.0,  12.0),
             "IMA-B5+":     (3.0,  15.0),
             "IDkA Pré 2A": (0.0,  10.0),
@@ -701,6 +701,8 @@ def load_from_repo(filename):
     name_variants = [filename]
     if filename == "IDKAPRE2":
         name_variants += ["IDKAPRE2A", "IDKAPRE2a", "IDkAPRE2", "IDKA_PRE2"]
+    if filename == "IDKAPRE5":
+        name_variants += ["IDKAPRE5A", "IDKAPRE5a", "IDkAPRE5", "IDKA_PRE5"]
 
     for base in bases:
         for fname in name_variants:
@@ -801,7 +803,7 @@ def load_demo_series():
               (0.088,0.03,208,8),(0.085,0.06,208,3),(0.125,0.02,208,4),
               (0.092,0.238,208,5),(0.118,0.184,208,6),
               (0.080,0.15,208,9),(0.45,0.65,208,10)]
-    keys = ["IRF-M","IMA-B5","IMA-B5+","IDkA Pré 2A","IHFA","IDA-DI",
+    keys = ["IDkA Pré 5A","IMA-B5","IMA-B5+","IDkA Pré 2A","IHFA","IDA-DI",
             "Ibovespa","Internac.","Ouro","Bitcoin"]
     return {k: gen(*p) for k,p in zip(keys, params)}
 
@@ -832,7 +834,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     has_real = False
 
     REPO_FILES = {
-        "IRF-M":     "IRFM",
+        "IDkA Pré 5A": "IDKAPRE5",
         "IMA-B5":    "IMAB5",
         "IMA-B5+":   "IMAB5MAIS",
         "IHFA":      "IHFA",
@@ -1008,7 +1010,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     # ── Séries diárias para monitoramento ────────────────────────────────────
     # Carrega as séries no formato diário (sem agregar para mensal)
     daily_series = {}
-    DAILY_FILES = {"IRF-M":"IRFM","IMA-B5":"IMAB5","IMA-B5+":"IMAB5MAIS","IHFA":"IHFA","IDA-DI":"IDADI","IDkA Pré 2A":"IDKAPRE2"}
+    DAILY_FILES = {"IDkA Pré 5A":"IDKAPRE5","IMA-B5":"IMAB5","IMA-B5+":"IMAB5MAIS","IHFA":"IHFA","IDA-DI":"IDADI","IDkA Pré 2A":"IDKAPRE2"}
     for cfg in ASSET_CFG:
         if cfg["key"] in ["IBOV","INTL","GOLD","BTC"]:
             continue
@@ -1102,7 +1104,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
             if vol_perfil_calc > vol_max_p:
                 fator = vol_max_p / vol_perfil_calc
                 pesos_ajust = {k: float(v) for k, v in pesos_perfil.items()}
-                for nome in ["Ibovespa","Internac.","Bitcoin","Ouro","IRF-M","IMA-B5","IMA-B5+"]:
+                for nome in ["Ibovespa","Internac.","Bitcoin","Ouro","IDkA Pré 5A","IMA-B5","IMA-B5+"]:
                     pesos_ajust[nome] = pesos_ajust.get(nome, 0) * fator
                 excesso = 1.0 - sum(pesos_ajust.values())
                 pesos_ajust["IDA-DI"] = pesos_ajust.get("IDA-DI",0) + excesso * 0.7
@@ -1184,7 +1186,7 @@ with col_h1:
         os.path.exists(f) for f in ["IHFA.xls","IHFA.xlsx","IHFA.csv","dados/IHFA.xls"]
     )
     if has_real and repo_ok and not any([
-        uploads.get("IRF-M"), uploads.get("IMA-B5"), uploads.get("IMA-B5+"), uploads.get("IHFA"),
+        uploads.get("IDkA Pré 5A"), uploads.get("IMA-B5"), uploads.get("IMA-B5+"), uploads.get("IHFA"),
         uploads.get("IDA-DI"), uploads.get("Ibovespa")
     ]):
         real_tag = "📁 dados do repositório"
@@ -1906,7 +1908,7 @@ def gerar_pdf_cliente(dados):
         "IDkA Pré 2A": "Prefixado de duration curta constante — juros de curto prazo",
         "Ouro":     "Ouro (GLD) em dólar — hedge contra crises e inflação",
         "Bitcoin":  "Bitcoin — micro-alocação de alto risco e potencial assimétrico",
-        "IRF-M":    "Renda fixa prefixada — protege contra queda de juros",
+        "IDkA Pré 5A": "Prefixado duration 5 anos — captura inclinação da curva de juros",
         "IMA-B5":   "NTN-B até 5 anos — proteção inflacionária com duration curta",
         "IMA-B5+":  "NTN-B acima de 5 anos — proteção inflacionária com duration longa",
         "IHFA":     "Fundos multimercado — geração de retorno diversificado",
@@ -1999,7 +2001,7 @@ o HRP nunca inverte a matriz de covariância, tornando os pesos mais estáveis e
 
 **Como funciona na prática:**
 - Calcula as correlações entre todos os ativos
-- Agrupa os similares (ex: IRF-M e IMA ficam juntos por serem renda fixa)
+- Agrupa os similares (ex: IDkA Pré 5A e IMA-B5 ficam juntos por serem renda fixa)
 - Distribui o risco proporcionalmente ao inverso da variância de cada grupo
 - Resultado: portfólio diversificado sem concentrações indesejadas
             """)
@@ -2027,10 +2029,10 @@ tanto o que os dados históricos dizem quanto o que você acredita que vai acont
     # ── Seção 2: Os Ativos ────────────────────────────────────────────────────
     with st.expander("📦 Os ativos da carteira", expanded=False):
         ativos_info = [
-            ("IRF-M", "Renda fixa", "#E24B4A", "26.8%", "ANBIMA",
-             "Índice de títulos públicos **prefixados** (LTN e NTN-F). "
-             "Representa o mercado de renda fixa pré com duration variável (~2.5 anos). "
-             "Sobe quando os juros caem e cai quando os juros sobem (efeito MTM)."),
+            ("IDkA Pré 5A", "Renda fixa", "#E24B4A", "23.0%", "ANBIMA",
+             "Índice de Duração Constante ANBIMA **prefixado com duration fixa de 5 anos**. "
+             "Captura a parte média da curva prefixada — mais sensível a juros que o Pré 2A. "
+             "Junto com o IDkA Pré 2A, permite apostar na inclinação da curva de juros."),
             ("IMA-B5", "Renda fixa", "#1D9E75", "10.0%", "ANBIMA",
              "Índice de NTN-B com vencimento **até 5 anos** — duration curta (~3 anos). "
              "Protege contra inflação com menor sensibilidade a juro real que o IMA-B5+."),
@@ -2055,7 +2057,7 @@ tanto o que os dados históricos dizem quanto o que você acredita que vai acont
              "o dólar sobe e amplifica o retorno desta parcela em reais."),
             ("IDkA Pré 2A", "Renda fixa", "#C94F9E", "8.0%", "ANBIMA",
              "Índice de Duração Constante ANBIMA **prefixado com duration fixa de 2 anos**. "
-             "Diferente do IRF-M (duration variável), mantém sempre ~2 anos — "
+             "Duration fixa de 2 anos — captura a parte curta da curva prefixada. "
              "exposição controlada e estável a juros prefixados de curto prazo."),
             ("Ouro", "Alternativos", "#D4AF37", "3.7%", "Yahoo Finance (GLD)",
              "ETF de ouro (**GLD**) em dólar, convertido para BRL via PTAX. "
@@ -2168,7 +2170,7 @@ tanto o que os dados históricos dizem quanto o que você acredita que vai acont
 **📂 Manual — uma vez por mês**
 1. Baixar os 4 índices da ANBIMA:
    [anbima.com.br/indices](https://www.anbima.com.br/pt_br/informar/indices.htm)
-2. Renomear: `IRFM.xls`, `IMA.xls`, `IHFA.xls`, `IDADI.xls`
+2. Renomear: `IDKAPRE5.xls`, `IDKAPRE2.xls`, `IMAB5.xls`, `IMAB5MAIS.xls`, `IHFA.xls`, `IDADI.xls`
 3. Subir no GitHub:
    [upload/main](https://github.com/santosluisfelipe5502-spec/portfolio-hrp-bl/upload/main)
 4. Streamlit atualiza automaticamente em ~30 segundos
@@ -3296,14 +3298,14 @@ with tab5:
     # CDI implícito no cenário (Selic menos haircut de liquidez diária ~0.1%)
     cdi_sc = selic - 0.1
 
-    # ── IRF-M (títulos públicos prefixados — LTN e NTN-F) ──
-    # Duration variável de mercado ≈ 2-3 anos (menor que IDKA Pré 5A).
-    # Mais representativo do mercado real de renda fixa prefixada.
-    # Em alta de juros, preço cai pelo MTM, mas duration menor = menos sensível.
-    duration_irfm = 2.5
+    # ── IDkA Pré 5A (prefixado duration constante 5 anos) ──
+    # Duration fixa de 5 anos — mais sensível a juros que o Pré 2A.
+    # Captura a parte média da curva prefixada. Em alta de juros,
+    # sofre MTM proporcional à duration de 5 anos.
+    duration_pre5 = 5.0
     delta_selic   = selic - 14.50   # variação vs cenário base (Selic atual 14.5%)
-    mtm_irfm      = -duration_irfm * delta_selic * 0.6
-    ret_pre       = max(-12, min(22, selic * 0.84 + mtm_irfm))
+    mtm_pre5      = -duration_pre5 * delta_selic * 0.6
+    ret_pre       = max(-18, min(28, selic * 0.86 + mtm_pre5))
 
     # ── IMA-B5 (NTN-B até 5 anos — inflação curta) ──
     duration_b5  = 3.0
@@ -3372,7 +3374,7 @@ with tab5:
     ret_intl      = max(-30, min(50, ret_intl_brl * 100))
 
     asset_rets = {
-        "IRF-M":     round(ret_pre,       2),
+        "IDkA Pré 5A": round(ret_pre,     2),
         "IMA-B5":    round(ret_ima_b5,    2),
         "IMA-B5+":   round(ret_ima_b5p,   2),
         "IDkA Pré 2A": round(ret_pre * 0.85, 2),
@@ -5920,7 +5922,7 @@ with tab13:
     if "pl_ativos" not in st.session_state:
         st.session_state["pl_ativos"] = [
             {"ticker": "BOVA11.SA", "tipo": "Yahoo", "peso": 30.0},
-            {"ticker": "IRF-M",     "tipo": "ANBIMA", "peso": 40.0},
+            {"ticker": "IDkA Pré 5A", "tipo": "ANBIMA", "peso": 40.0},
             {"ticker": "IVVB11.SA", "tipo": "Yahoo", "peso": 30.0},
         ]
 
@@ -5930,7 +5932,7 @@ with tab13:
     col_add1, col_add2, col_add3, col_add4 = st.columns([2, 1.5, 1, 1])
     with col_add1:
         novo_ticker = st.text_input("Ticker ou ativo ANBIMA", key="pl_novo_ticker",
-                                     placeholder="Ex: PETR4.SA ou IRF-M")
+                                     placeholder="Ex: PETR4.SA ou IDkA Pré 5A")
     with col_add2:
         nomes_anbima = [cfg["name"] for cfg in ASSET_CFG]
         tipo_novo = st.selectbox("Tipo", ["Yahoo Finance", "ANBIMA"], key="pl_tipo_novo")
