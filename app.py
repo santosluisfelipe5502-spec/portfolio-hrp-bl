@@ -6286,217 +6286,351 @@ with tab13:
 # ── Tab 14: Ciclos de juros ───────────────────────────────────────────────────
 with tab14:
     st.markdown(
-        "Como cada ativo e as carteiras se comportaram em **ciclos de alta e corte "
-        "da Selic**. Os ciclos são detectados automaticamente a partir da trajetória "
-        "do CDI — útil para responder: *se a Selic começar a cair, o que acontece com o portfólio?*"
+        "Como as carteiras e ativos se comportaram em **ciclos de alta e corte da Selic**. "
+        "Os ciclos são detectados automaticamente pela trajetória do CDI."
     )
 
-    # ── Detectar ciclos automaticamente pela taxa CDI mensal ──────────────────
-    # CDI mensal → taxa anualizada aproximada para identificar tendência
-    cdi_mensal = cdi_aligned.copy()
-    cdi_anual_aprox = ((1 + cdi_mensal) ** 12 - 1) * 100  # taxa a.a. aproximada
-
-    # Suavizar com média móvel de 3 meses para reduzir ruído
-    cdi_suave = cdi_anual_aprox.rolling(3, min_periods=1).mean()
-
-    # Detectar direção: comparar com 3 meses atrás
-    variacao = cdi_suave.diff(3)
-
-    # Classificar cada mês: alta (+), corte (-), estável (~)
-    LIMIAR = 0.15  # p.p. de variação em 3m para considerar movimento
-    direcao = pd.Series(0, index=cdi_suave.index)  # 0=estável, 1=alta, -1=corte
+    # ── Detectar ciclos pela taxa CDI ─────────────────────────────────────────
+    cdi_anual = ((1 + cdi_aligned) ** 12 - 1) * 100
+    cdi_suave = cdi_anual.rolling(3, min_periods=1).mean()
+    variacao  = cdi_suave.diff(3)
+    LIMIAR = 0.15
+    direcao = pd.Series(0, index=cdi_suave.index)
     direcao[variacao > LIMIAR] = 1
     direcao[variacao < -LIMIAR] = -1
 
-    # Agrupar em ciclos contíguos de mesma direção
     ciclos = []
     if len(direcao) > 0:
         atual_dir = direcao.iloc[0]
         ini_idx = direcao.index[0]
         for i in range(1, len(direcao)):
             if direcao.iloc[i] != atual_dir:
-                # Fechar ciclo anterior (só registrar altas e cortes relevantes)
-                if atual_dir != 0:
-                    fim_idx = direcao.index[i-1]
-                    dur = len(direcao[ini_idx:fim_idx])
-                    if dur >= 3:  # mínimo 3 meses para ser um ciclo
-                        ciclos.append({
-                            "tipo": "Alta" if atual_dir == 1 else "Corte",
-                            "inicio": ini_idx, "fim": fim_idx,
-                            "cdi_ini": cdi_suave[ini_idx],
-                            "cdi_fim": cdi_suave[fim_idx],
-                        })
+                if atual_dir != 0 and len(direcao[ini_idx:direcao.index[i-1]]) >= 3:
+                    ciclos.append({"tipo": "Alta" if atual_dir==1 else "Corte",
+                                   "inicio": ini_idx, "fim": direcao.index[i-1],
+                                   "cdi_ini": cdi_suave[ini_idx],
+                                   "cdi_fim": cdi_suave[direcao.index[i-1]]})
                 atual_dir = direcao.iloc[i]
                 ini_idx = direcao.index[i]
-        # Fechar último ciclo
-        if atual_dir != 0:
-            fim_idx = direcao.index[-1]
-            if len(direcao[ini_idx:fim_idx]) >= 3:
-                ciclos.append({
-                    "tipo": "Alta" if atual_dir == 1 else "Corte",
-                    "inicio": ini_idx, "fim": fim_idx,
-                    "cdi_ini": cdi_suave[ini_idx],
-                    "cdi_fim": cdi_suave[fim_idx],
-                })
+        if atual_dir != 0 and len(direcao[ini_idx:direcao.index[-1]]) >= 3:
+            ciclos.append({"tipo": "Alta" if atual_dir==1 else "Corte",
+                           "inicio": ini_idx, "fim": direcao.index[-1],
+                           "cdi_ini": cdi_suave[ini_idx],
+                           "cdi_fim": cdi_suave[direcao.index[-1]]})
 
     if not ciclos:
-        st.info("Não foi possível detectar ciclos claros de juros no período disponível.")
+        st.info("Não foi possível detectar ciclos claros de juros no período.")
     else:
+        # ── GRÁFICO: trajetória do CDI com ciclos destacados ──────────────────
+        fig_cj = go.Figure()
+
+        # Faixas coloridas de fundo para cada ciclo
+        for c in ciclos:
+            cor_faixa = "rgba(226,75,74,0.10)" if c["tipo"]=="Alta" else "rgba(29,158,117,0.10)"
+            fig_cj.add_vrect(
+                x0=c["inicio"], x1=c["fim"],
+                fillcolor=cor_faixa, layer="below", line_width=0,
+            )
+
+        # Linha do CDI
+        fig_cj.add_trace(go.Scatter(
+            x=cdi_suave.index, y=cdi_suave.values.round(2),
+            name="CDI (% a.a.)", line=dict(color="#1a1a18", width=2),
+            hovertemplate="%{x|%b/%Y}<br>CDI: %{y:.1f}%% a.a.<extra></extra>"))
+
+        # Setas/anotações de cada ciclo
+        for c in ciclos:
+            meio = c["inicio"] + (c["fim"] - c["inicio"]) / 2
+            cor_txt = "#E24B4A" if c["tipo"]=="Alta" else "#1D9E75"
+            emoji = "📈" if c["tipo"]=="Alta" else "📉"
+            fig_cj.add_annotation(
+                x=meio, y=cdi_suave.max()*0.96,
+                text=f"{emoji} {c['tipo']}", showarrow=False,
+                font=dict(size=11, color=cor_txt, family="Helvetica"),
+                bgcolor="rgba(255,255,255,0.7)",
+            )
+
+        fig_cj.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+            height=320, font=dict(color="#1a1a18"),
+            margin=dict(l=0, r=0, t=10, b=0),
+            legend=dict(orientation="h", y=1.05, x=0, font=dict(color="#1a1a18")),
+            xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441"), color="#1a1a18"),
+            yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441"), color="#1a1a18",
+                       title="Selic/CDI aprox. (% a.a.)"),
+        )
+        st.plotly_chart(fig_cj, use_container_width=True)
+
         # ── Pesos das carteiras ────────────────────────────────────────────────
         custom_w_cj = {cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}",
                        cfg["w"]*100)/100 for cfg in ASSET_CFG}
-        tot_cj = sum(custom_w_cj.values())
-        tem_custom_cj = abs(tot_cj - 1.0) < 0.02
+        tem_custom_cj = abs(sum(custom_w_cj.values()) - 1.0) < 0.02
 
-        # Filtro: mostrar todos os ciclos ou só cortes/altas
-        col_f1, col_f2 = st.columns([1, 3])
-        filtro_tipo = col_f1.selectbox("Mostrar ciclos de",
-                                        ["Todos", "Só cortes", "Só altas"],
-                                        key="cj_filtro")
+        rets_ativos_cj = {cfg["name"]: (series[cfg["name"]]["valor"]
+            .pct_change().dropna().reindex(common_idx).ffill().fillna(0))
+            for cfg in ASSET_CFG}
+        ret_cust_cj = (sum(custom_w_cj[a["name"]] * rets_ativos_cj[a["name"]]
+                       for a in ASSET_CFG) if tem_custom_cj else None)
 
-        ciclos_show = ciclos
-        if filtro_tipo == "Só cortes":
-            ciclos_show = [c for c in ciclos if c["tipo"] == "Corte"]
-        elif filtro_tipo == "Só altas":
-            ciclos_show = [c for c in ciclos if c["tipo"] == "Alta"]
-
-        st.markdown(f"**{len(ciclos_show)} ciclos detectados** no período "
-                    f"{cdi_suave.index[0].strftime('%b/%Y')} → {cdi_suave.index[-1].strftime('%b/%Y')}")
-
-        # ── Função para calcular métricas de uma série num período ─────────────
-        def metricas_periodo(ret_series, ini, fim):
+        def ret_periodo_cj(ret_series, ini, fim):
             r = ret_series[(ret_series.index >= ini) & (ret_series.index <= fim)].dropna()
-            if len(r) < 2:
-                return None
-            acum = (1 + r).prod() - 1
-            vol  = r.std() * np.sqrt(12)
-            cum  = (1 + r).cumprod()
-            dd   = ((cum - cum.cummax()) / cum.cummax()).min()
-            return {"acum": acum*100, "vol": vol*100, "dd": dd*100}
+            return ((1 + r).prod() - 1) * 100 if len(r) >= 2 else None
 
-        # Retornos por ativo
-        rets_ativos_cj = {}
-        for cfg in ASSET_CFG:
-            rets_ativos_cj[cfg["name"]] = (series[cfg["name"]]["valor"]
-                .pct_change().dropna().reindex(common_idx).ffill().fillna(0))
-
-        # Retornos das carteiras
-        ret_hrp_cj = port_ret
-        ret_cust_cj = None
-        if tem_custom_cj:
-            ret_cust_cj = sum(custom_w_cj[a["name"]] * rets_ativos_cj[a["name"]]
-                              for a in ASSET_CFG)
-
-        # ── Exibir cada ciclo ──────────────────────────────────────────────────
-        for ci, ciclo in enumerate(ciclos_show):
-            tipo = ciclo["tipo"]
-            cor_ciclo = "#E24B4A" if tipo == "Alta" else "#1D9E75"
-            emoji = "📈" if tipo == "Alta" else "📉"
-            ini, fim = ciclo["inicio"], ciclo["fim"]
-            dur_meses = len(cdi_suave[ini:fim])
-
-            st.markdown(
-                f"<div style='margin-top:1.5rem;padding:10px 16px;border-radius:8px;"
-                f"background:{cor_ciclo}15;border-left:4px solid {cor_ciclo}'>"
-                f"<span style='font-size:15px;font-weight:600;color:{cor_ciclo}'>"
-                f"{emoji} Ciclo de {tipo} — {ini.strftime('%b/%Y')} a {fim.strftime('%b/%Y')}</span>"
-                f"<br><span style='font-size:12px;color:#888780'>"
-                f"CDI de {ciclo['cdi_ini']:.1f}% para {ciclo['cdi_fim']:.1f}% a.a. "
-                f"· {dur_meses} meses</span></div>",
-                unsafe_allow_html=True
-            )
-
-            # Montar tabela do ciclo
-            linhas_ciclo = []
-            # Carteiras primeiro
-            m_hrp = metricas_periodo(ret_hrp_cj, ini, fim)
-            if m_hrp:
-                linhas_ciclo.append({
-                    "Ativo/Carteira": "🔷 HRP+BL",
-                    "Retorno": f"{m_hrp['acum']:+.1f}%",
-                    "Vol. a.a.": f"{m_hrp['vol']:.1f}%",
-                    "Max DD": f"{m_hrp['dd']:.1f}%",
-                })
-            if tem_custom_cj and ret_cust_cj is not None:
-                m_cust = metricas_periodo(ret_cust_cj, ini, fim)
-                if m_cust:
-                    linhas_ciclo.append({
-                        "Ativo/Carteira": "🔶 Customizado",
-                        "Retorno": f"{m_cust['acum']:+.1f}%",
-                        "Vol. a.a.": f"{m_cust['vol']:.1f}%",
-                        "Max DD": f"{m_cust['dd']:.1f}%",
-                    })
-            # CDI como referência
-            m_cdi = metricas_periodo(cdi_aligned, ini, fim)
-            if m_cdi:
-                linhas_ciclo.append({
-                    "Ativo/Carteira": "⚪ CDI",
-                    "Retorno": f"{m_cdi['acum']:+.1f}%",
-                    "Vol. a.a.": "~0%",
-                    "Max DD": "0%",
-                })
-            # Ativos individuais
-            for cfg in ASSET_CFG:
-                m_a = metricas_periodo(rets_ativos_cj[cfg["name"]], ini, fim)
-                if m_a:
-                    linhas_ciclo.append({
-                        "Ativo/Carteira": cfg["name"],
-                        "Retorno": f"{m_a['acum']:+.1f}%",
-                        "Vol. a.a.": f"{m_a['vol']:.1f}%",
-                        "Max DD": f"{m_a['dd']:.1f}%",
-                    })
-
-            df_ciclo = pd.DataFrame(linhas_ciclo).set_index("Ativo/Carteira")
-            st.dataframe(df_ciclo, use_container_width=True)
-
-        # ── Síntese: média de todos os ciclos por tipo ─────────────────────────
-        st.markdown("<div class='section-title' style='margin-top:2rem'>"
-                    "síntese — comportamento médio por tipo de ciclo</div>",
+        # ── SÍNTESE ENXUTA: comportamento médio por tipo de ciclo ─────────────
+        st.markdown("<div class='section-title'>retorno médio por ciclo</div>",
                     unsafe_allow_html=True)
 
-        for tipo_sint in ["Corte", "Alta"]:
+        col_c, col_a = st.columns(2)
+        for tipo_sint, col in [("Corte", col_c), ("Alta", col_a)]:
             ciclos_tipo = [c for c in ciclos if c["tipo"] == tipo_sint]
             if not ciclos_tipo:
                 continue
             emoji = "📉" if tipo_sint == "Corte" else "📈"
             cor_s = "#1D9E75" if tipo_sint == "Corte" else "#E24B4A"
 
-            # Média de retorno de cada ativo across todos os ciclos desse tipo
-            medias = {}
-            for cfg in ASSET_CFG:
-                rets_ciclo = []
-                for c in ciclos_tipo:
-                    m = metricas_periodo(rets_ativos_cj[cfg["name"]], c["inicio"], c["fim"])
-                    if m:
-                        rets_ciclo.append(m["acum"])
-                if rets_ciclo:
-                    medias[cfg["name"]] = np.mean(rets_ciclo)
+            # Médias
+            def media_ciclos(ret_s):
+                vals = [ret_periodo_cj(ret_s, c["inicio"], c["fim"]) for c in ciclos_tipo]
+                vals = [v for v in vals if v is not None]
+                return np.mean(vals) if vals else None
 
-            # HRP+BL médio
-            rets_hrp_ciclo = [metricas_periodo(ret_hrp_cj, c["inicio"], c["fim"])["acum"]
-                              for c in ciclos_tipo
-                              if metricas_periodo(ret_hrp_cj, c["inicio"], c["fim"])]
-            hrp_medio = np.mean(rets_hrp_ciclo) if rets_hrp_ciclo else 0
+            hrp_m = media_ciclos(port_ret)
+            cust_m = media_ciclos(ret_cust_cj) if ret_cust_cj is not None else None
+            medias_at = {cfg["name"]: media_ciclos(rets_ativos_cj[cfg["name"]])
+                         for cfg in ASSET_CFG}
+            medias_at = {k: v for k, v in medias_at.items() if v is not None}
+            ranking = sorted(medias_at.items(), key=lambda x: x[1], reverse=True)
 
-            ranking = sorted(medias.items(), key=lambda x: x[1], reverse=True)
+            with col:
+                st.markdown(
+                    f"<div style='padding:10px 14px;border-radius:8px;"
+                    f"background:{cor_s}15;border-left:4px solid {cor_s};margin-bottom:10px'>"
+                    f"<span style='font-size:14px;font-weight:600;color:{cor_s}'>"
+                    f"{emoji} Ciclos de {tipo_sint}</span><br>"
+                    f"<span style='font-size:12px;color:#888780'>"
+                    f"{len(ciclos_tipo)} ciclo(s) no histórico</span></div>",
+                    unsafe_allow_html=True
+                )
+                # Carteiras em destaque
+                linhas = []
+                linhas.append({"": "🔷 HRP+BL", "Retorno médio": f"{hrp_m:+.1f}%" if hrp_m else "—"})
+                if cust_m is not None:
+                    linhas.append({"": "🔶 Customizado", "Retorno médio": f"{cust_m:+.1f}%"})
+                # Top 3 e bottom 1 ativos
+                for nome, m in ranking[:3]:
+                    linhas.append({"": f"🟢 {nome}", "Retorno médio": f"{m:+.1f}%"})
+                if len(ranking) > 3:
+                    pior = ranking[-1]
+                    linhas.append({"": f"🔴 {pior[0]}", "Retorno médio": f"{pior[1]:+.1f}%"})
+                df_l = pd.DataFrame(linhas).set_index("")
+                st.dataframe(df_l, use_container_width=True)
 
+        # ── Detalhe por ciclo (expansível, opcional) ──────────────────────────
+        with st.expander("📋 Ver detalhe de cada ciclo individual", expanded=False):
+            for ciclo in ciclos:
+                tipo = ciclo["tipo"]
+                cor_ciclo = "#E24B4A" if tipo == "Alta" else "#1D9E75"
+                emoji = "📈" if tipo == "Alta" else "📉"
+                ini, fim = ciclo["inicio"], ciclo["fim"]
+                dur = len(cdi_suave[ini:fim])
+
+                st.markdown(
+                    f"<div style='margin-top:1rem;font-size:13px;font-weight:600;"
+                    f"color:{cor_ciclo}'>{emoji} {tipo}: {ini.strftime('%b/%Y')} → "
+                    f"{fim.strftime('%b/%Y')} · CDI {ciclo['cdi_ini']:.1f}%→"
+                    f"{ciclo['cdi_fim']:.1f}% · {dur}m</div>",
+                    unsafe_allow_html=True
+                )
+                linhas_d = []
+                r_hrp = ret_periodo_cj(port_ret, ini, fim)
+                if r_hrp is not None:
+                    linhas_d.append({"Ativo/Carteira": "🔷 HRP+BL", "Retorno": f"{r_hrp:+.1f}%"})
+                if ret_cust_cj is not None:
+                    r_c = ret_periodo_cj(ret_cust_cj, ini, fim)
+                    if r_c is not None:
+                        linhas_d.append({"Ativo/Carteira": "🔶 Customizado", "Retorno": f"{r_c:+.1f}%"})
+                for cfg in ASSET_CFG:
+                    r_a = ret_periodo_cj(rets_ativos_cj[cfg["name"]], ini, fim)
+                    if r_a is not None:
+                        linhas_d.append({"Ativo/Carteira": cfg["name"], "Retorno": f"{r_a:+.1f}%"})
+                st.dataframe(pd.DataFrame(linhas_d).set_index("Ativo/Carteira"),
+                             use_container_width=True)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # ── CORRELAÇÕES ────────────────────────────────────────────────────────
+        # ══════════════════════════════════════════════════════════════════════
+        st.divider()
+        st.markdown("<div class='section-title'>correlações entre os ativos</div>",
+                    unsafe_allow_html=True)
+        st.markdown(
+            "O modelo HRP constrói os pesos a partir destas correlações. "
+            "Azul = andam juntos · Vermelho = andam opostos · Branco = independentes."
+        )
+
+        # Montar matriz de retornos alinhados
+        ret_matrix = pd.DataFrame({
+            cfg["name"]: rets_ativos_cj[cfg["name"]] for cfg in ASSET_CFG
+        }).dropna()
+
+        # ── 1. Matriz de correlação geral (heatmap) ───────────────────────────
+        corr = ret_matrix.corr()
+        nomes_corr = list(corr.columns)
+
+        fig_corr = go.Figure(go.Heatmap(
+            z=corr.values,
+            x=nomes_corr, y=nomes_corr,
+            zmin=-1, zmax=1, zmid=0,
+            colorscale=[
+                [0.0, "#B22222"], [0.35, "#E8A0A0"], [0.5, "#FFFFFF"],
+                [0.65, "#8DBFE4"], [1.0, "#1a3a5c"],
+            ],
+            text=corr.round(2).values,
+            texttemplate="%{text}",
+            textfont=dict(size=9),
+            colorbar=dict(title="Corr.", tickfont=dict(color="#444441", size=9),
+                          thickness=12, len=0.8),
+            hovertemplate="%{y} × %{x}<br>Correlação: %{z:.2f}<extra></extra>",
+        ))
+        fig_corr.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+            height=460, font=dict(color="#1a1a18", size=10),
+            margin=dict(l=0, r=0, t=8, b=0),
+            xaxis=dict(tickangle=-45, tickfont=dict(color="#444441", size=10),
+                       side="bottom", color="#1a1a18"),
+            yaxis=dict(autorange="reversed", tickfont=dict(color="#444441", size=10),
+                       color="#1a1a18"),
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
+
+        # ── Insight automático: pares mais e menos correlacionados ─────────────
+        pares = []
+        for i in range(len(nomes_corr)):
+            for j in range(i+1, len(nomes_corr)):
+                pares.append((nomes_corr[i], nomes_corr[j], corr.iloc[i, j]))
+        pares_ord = sorted(pares, key=lambda x: x[2], reverse=True)
+
+        mais = pares_ord[0]
+        menos = pares_ord[-1]
+        # Par mais próximo de zero (melhor diversificação)
+        neutro = min(pares, key=lambda x: abs(x[2]))
+
+        col_i1, col_i2, col_i3 = st.columns(3)
+        col_i1.markdown(
+            f"<div style='padding:8px 12px;border-radius:6px;background:#1a3a5c15;"
+            f"border-left:3px solid #1a3a5c'><span style='font-size:11px;color:#888780'>"
+            f"MAIS CORRELACIONADOS</span><br><strong style='font-size:13px'>"
+            f"{mais[0]} × {mais[1]}</strong><br>"
+            f"<span style='color:#1a3a5c;font-weight:600'>{mais[2]:+.2f}</span></div>",
+            unsafe_allow_html=True)
+        col_i2.markdown(
+            f"<div style='padding:8px 12px;border-radius:6px;background:#1D9E7515;"
+            f"border-left:3px solid #1D9E75'><span style='font-size:11px;color:#888780'>"
+            f"MELHOR DIVERSIFICAÇÃO (~0)</span><br><strong style='font-size:13px'>"
+            f"{neutro[0]} × {neutro[1]}</strong><br>"
+            f"<span style='color:#1D9E75;font-weight:600'>{neutro[2]:+.2f}</span></div>",
+            unsafe_allow_html=True)
+        col_i3.markdown(
+            f"<div style='padding:8px 12px;border-radius:6px;background:#B2222215;"
+            f"border-left:3px solid #B22222'><span style='font-size:11px;color:#888780'>"
+            f"MAIS OPOSTOS</span><br><strong style='font-size:13px'>"
+            f"{menos[0]} × {menos[1]}</strong><br>"
+            f"<span style='color:#B22222;font-weight:600'>{menos[2]:+.2f}</span></div>",
+            unsafe_allow_html=True)
+
+        # ── 2. Como a correlação muda em ciclos de alta vs corte ──────────────
+        st.markdown("<div class='section-title' style='margin-top:1.5rem'>"
+                    "a diversificação muda entre ciclos?</div>",
+                    unsafe_allow_html=True)
+
+        def corr_media_ciclos(tipo):
+            """Correlação média dos ativos nos períodos de um tipo de ciclo."""
+            ciclos_t = [c for c in ciclos if c["tipo"] == tipo]
+            if not ciclos_t:
+                return None
+            # Concatenar retornos de todos os períodos daquele tipo
+            frames = []
+            for c in ciclos_t:
+                mask = (ret_matrix.index >= c["inicio"]) & (ret_matrix.index <= c["fim"])
+                frames.append(ret_matrix[mask])
+            if not frames:
+                return None
+            combined = pd.concat(frames)
+            return combined.corr() if len(combined) > 3 else None
+
+        corr_corte = corr_media_ciclos("Corte")
+        corr_alta  = corr_media_ciclos("Alta")
+
+        if corr_corte is not None and corr_alta is not None:
+            # Correlação média geral (excluindo diagonal) em cada regime
+            def corr_media_geral(m):
+                vals = m.values[np.triu_indices_from(m.values, k=1)]
+                return np.nanmean(vals)
+
+            cm_corte = corr_media_geral(corr_corte)
+            cm_alta  = corr_media_geral(corr_alta)
+
+            col_cc, col_ca = st.columns(2)
+            col_cc.markdown(
+                f"<div style='padding:12px 16px;border-radius:8px;background:#1D9E7515;"
+                f"border-left:4px solid #1D9E75;text-align:center'>"
+                f"<span style='font-size:12px;color:#888780'>📉 CICLOS DE CORTE</span><br>"
+                f"<span style='font-size:24px;font-weight:700;color:#1D9E75'>{cm_corte:+.2f}</span><br>"
+                f"<span style='font-size:11px;color:#888780'>correlação média entre ativos</span></div>",
+                unsafe_allow_html=True)
+            col_ca.markdown(
+                f"<div style='padding:12px 16px;border-radius:8px;background:#E24B4A15;"
+                f"border-left:4px solid #E24B4A;text-align:center'>"
+                f"<span style='font-size:12px;color:#888780'>📈 CICLOS DE ALTA</span><br>"
+                f"<span style='font-size:24px;font-weight:700;color:#E24B4A'>{cm_alta:+.2f}</span><br>"
+                f"<span style='font-size:11px;color:#888780'>correlação média entre ativos</span></div>",
+                unsafe_allow_html=True)
+
+            if cm_alta > cm_corte + 0.05:
+                st.info("📊 As correlações **sobem em ciclos de alta** de juros — os ativos "
+                        "tendem a se mover mais juntos, reduzindo a diversificação justamente "
+                        "quando o ambiente é mais adverso para a renda fixa.")
+            elif cm_corte > cm_alta + 0.05:
+                st.info("📊 As correlações **sobem em ciclos de corte** — quando o juro cai, "
+                        "os ativos de renda fixa tendem a se valorizar em conjunto.")
+            else:
+                st.info("📊 As correlações se mantêm relativamente **estáveis** entre os "
+                        "ciclos de alta e corte.")
+        else:
+            st.caption("Dados insuficientes para comparar correlações entre ciclos.")
+
+        # ── 3. HRP+BL vs Customizado — são realmente diferentes? ──────────────
+        if ret_cust_cj is not None:
+            st.markdown("<div class='section-title' style='margin-top:1.5rem'>"
+                        "HRP+BL vs Customizado — são carteiras diferentes?</div>",
+                        unsafe_allow_html=True)
+            idx_comp = port_ret.index.intersection(ret_cust_cj.index)
+            corr_carteiras = port_ret.reindex(idx_comp).corr(ret_cust_cj.reindex(idx_comp))
+
+            cor_c = "#E24B4A" if corr_carteiras > 0.95 else "#C4770A" if corr_carteiras > 0.85 else "#1D9E75"
             st.markdown(
-                f"<div style='margin-top:1rem'><span style='font-size:14px;font-weight:600;"
-                f"color:{cor_s}'>{emoji} Em ciclos de {tipo_sint} "
-                f"({len(ciclos_tipo)} ciclos)</span></div>",
-                unsafe_allow_html=True
-            )
-            txt = f"**HRP+BL** rendeu em média **{hrp_medio:+.1f}%** por ciclo de {tipo_sint.lower()}.\n\n"
-            txt += "Ranking dos ativos (retorno médio por ciclo):\n"
-            for i, (nome, media) in enumerate(ranking, 1):
-                emoji_r = "🟢" if media >= 0 else "🔴"
-                txt += f"{i}. {emoji_r} **{nome}**: {media:+.1f}%\n"
-            st.markdown(txt)
+                f"<div style='padding:12px 16px;border-radius:8px;background:{cor_c}15;"
+                f"border-left:4px solid {cor_c}'>"
+                f"<span style='font-size:28px;font-weight:700;color:{cor_c}'>"
+                f"{corr_carteiras:.3f}</span> "
+                f"<span style='font-size:13px;color:#444441'>de correlação entre as duas carteiras</span>"
+                f"</div>", unsafe_allow_html=True)
+
+            if corr_carteiras > 0.95:
+                st.warning("⚠️ Correlação muito alta (>0.95) — o portfólio customizado é "
+                           "praticamente idêntico ao HRP+BL. As diferenças de peso quase "
+                           "não alteram o comportamento. Vale revisar se o customizado "
+                           "está agregando algo de fato.")
+            elif corr_carteiras > 0.85:
+                st.info("📊 Correlação alta (0.85-0.95) — as carteiras são parecidas mas "
+                        "têm diferenças perceptíveis de comportamento.")
+            else:
+                st.success("✅ Correlação moderada (<0.85) — o customizado tem um perfil de "
+                           "comportamento genuinamente distinto do HRP+BL.")
 
         st.caption(
-            "Ciclos detectados automaticamente pela variação do CDI (média móvel 3m, "
-            "limiar de 0.15 p.p. em 3 meses, duração mínima 3 meses). "
-            "Configure os pesos na aba Rebalanceamento para incluir o Customizado."
+            "Ciclos detectados pela variação do CDI (média móvel 3m, limiar 0.15 p.p., "
+            "mínimo 3 meses). Configure pesos na aba Rebalanceamento para incluir o Customizado."
         )
 
 
