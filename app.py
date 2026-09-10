@@ -2003,7 +2003,8 @@ def gerar_pdf_cliente(dados):
 
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
-tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
+(tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9,
+ tab10, tab11, tab12, tab13, tab14) = st.tabs([
     "📖 Guia",
     "📈 Retorno acumulado",
     "📉 Drawdown",
@@ -2018,6 +2019,7 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12,
     "🎲 Monte Carlo",
     "📊 Atribuição de retorno",
     "🧪 Portfólio livre",
+    "📉📈 Ciclos de juros",
 ])
 
 # ── Tab 0: Guia ──────────────────────────────────────────────────────────────
@@ -6279,6 +6281,223 @@ with tab13:
         "ETFs internacionais e ações americanas usam o ticker direto (ex: SPY, AAPL). "
         "O período de comparação é limitado pelo ativo com histórico mais curto."
     )
+
+
+# ── Tab 14: Ciclos de juros ───────────────────────────────────────────────────
+with tab14:
+    st.markdown(
+        "Como cada ativo e as carteiras se comportaram em **ciclos de alta e corte "
+        "da Selic**. Os ciclos são detectados automaticamente a partir da trajetória "
+        "do CDI — útil para responder: *se a Selic começar a cair, o que acontece com o portfólio?*"
+    )
+
+    # ── Detectar ciclos automaticamente pela taxa CDI mensal ──────────────────
+    # CDI mensal → taxa anualizada aproximada para identificar tendência
+    cdi_mensal = cdi_aligned.copy()
+    cdi_anual_aprox = ((1 + cdi_mensal) ** 12 - 1) * 100  # taxa a.a. aproximada
+
+    # Suavizar com média móvel de 3 meses para reduzir ruído
+    cdi_suave = cdi_anual_aprox.rolling(3, min_periods=1).mean()
+
+    # Detectar direção: comparar com 3 meses atrás
+    variacao = cdi_suave.diff(3)
+
+    # Classificar cada mês: alta (+), corte (-), estável (~)
+    LIMIAR = 0.15  # p.p. de variação em 3m para considerar movimento
+    direcao = pd.Series(0, index=cdi_suave.index)  # 0=estável, 1=alta, -1=corte
+    direcao[variacao > LIMIAR] = 1
+    direcao[variacao < -LIMIAR] = -1
+
+    # Agrupar em ciclos contíguos de mesma direção
+    ciclos = []
+    if len(direcao) > 0:
+        atual_dir = direcao.iloc[0]
+        ini_idx = direcao.index[0]
+        for i in range(1, len(direcao)):
+            if direcao.iloc[i] != atual_dir:
+                # Fechar ciclo anterior (só registrar altas e cortes relevantes)
+                if atual_dir != 0:
+                    fim_idx = direcao.index[i-1]
+                    dur = len(direcao[ini_idx:fim_idx])
+                    if dur >= 3:  # mínimo 3 meses para ser um ciclo
+                        ciclos.append({
+                            "tipo": "Alta" if atual_dir == 1 else "Corte",
+                            "inicio": ini_idx, "fim": fim_idx,
+                            "cdi_ini": cdi_suave[ini_idx],
+                            "cdi_fim": cdi_suave[fim_idx],
+                        })
+                atual_dir = direcao.iloc[i]
+                ini_idx = direcao.index[i]
+        # Fechar último ciclo
+        if atual_dir != 0:
+            fim_idx = direcao.index[-1]
+            if len(direcao[ini_idx:fim_idx]) >= 3:
+                ciclos.append({
+                    "tipo": "Alta" if atual_dir == 1 else "Corte",
+                    "inicio": ini_idx, "fim": fim_idx,
+                    "cdi_ini": cdi_suave[ini_idx],
+                    "cdi_fim": cdi_suave[fim_idx],
+                })
+
+    if not ciclos:
+        st.info("Não foi possível detectar ciclos claros de juros no período disponível.")
+    else:
+        # ── Pesos das carteiras ────────────────────────────────────────────────
+        custom_w_cj = {cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}",
+                       cfg["w"]*100)/100 for cfg in ASSET_CFG}
+        tot_cj = sum(custom_w_cj.values())
+        tem_custom_cj = abs(tot_cj - 1.0) < 0.02
+
+        # Filtro: mostrar todos os ciclos ou só cortes/altas
+        col_f1, col_f2 = st.columns([1, 3])
+        filtro_tipo = col_f1.selectbox("Mostrar ciclos de",
+                                        ["Todos", "Só cortes", "Só altas"],
+                                        key="cj_filtro")
+
+        ciclos_show = ciclos
+        if filtro_tipo == "Só cortes":
+            ciclos_show = [c for c in ciclos if c["tipo"] == "Corte"]
+        elif filtro_tipo == "Só altas":
+            ciclos_show = [c for c in ciclos if c["tipo"] == "Alta"]
+
+        st.markdown(f"**{len(ciclos_show)} ciclos detectados** no período "
+                    f"{cdi_suave.index[0].strftime('%b/%Y')} → {cdi_suave.index[-1].strftime('%b/%Y')}")
+
+        # ── Função para calcular métricas de uma série num período ─────────────
+        def metricas_periodo(ret_series, ini, fim):
+            r = ret_series[(ret_series.index >= ini) & (ret_series.index <= fim)].dropna()
+            if len(r) < 2:
+                return None
+            acum = (1 + r).prod() - 1
+            vol  = r.std() * np.sqrt(12)
+            cum  = (1 + r).cumprod()
+            dd   = ((cum - cum.cummax()) / cum.cummax()).min()
+            return {"acum": acum*100, "vol": vol*100, "dd": dd*100}
+
+        # Retornos por ativo
+        rets_ativos_cj = {}
+        for cfg in ASSET_CFG:
+            rets_ativos_cj[cfg["name"]] = (series[cfg["name"]]["valor"]
+                .pct_change().dropna().reindex(common_idx).ffill().fillna(0))
+
+        # Retornos das carteiras
+        ret_hrp_cj = port_ret
+        ret_cust_cj = None
+        if tem_custom_cj:
+            ret_cust_cj = sum(custom_w_cj[a["name"]] * rets_ativos_cj[a["name"]]
+                              for a in ASSET_CFG)
+
+        # ── Exibir cada ciclo ──────────────────────────────────────────────────
+        for ci, ciclo in enumerate(ciclos_show):
+            tipo = ciclo["tipo"]
+            cor_ciclo = "#E24B4A" if tipo == "Alta" else "#1D9E75"
+            emoji = "📈" if tipo == "Alta" else "📉"
+            ini, fim = ciclo["inicio"], ciclo["fim"]
+            dur_meses = len(cdi_suave[ini:fim])
+
+            st.markdown(
+                f"<div style='margin-top:1.5rem;padding:10px 16px;border-radius:8px;"
+                f"background:{cor_ciclo}15;border-left:4px solid {cor_ciclo}'>"
+                f"<span style='font-size:15px;font-weight:600;color:{cor_ciclo}'>"
+                f"{emoji} Ciclo de {tipo} — {ini.strftime('%b/%Y')} a {fim.strftime('%b/%Y')}</span>"
+                f"<br><span style='font-size:12px;color:#888780'>"
+                f"CDI de {ciclo['cdi_ini']:.1f}% para {ciclo['cdi_fim']:.1f}% a.a. "
+                f"· {dur_meses} meses</span></div>",
+                unsafe_allow_html=True
+            )
+
+            # Montar tabela do ciclo
+            linhas_ciclo = []
+            # Carteiras primeiro
+            m_hrp = metricas_periodo(ret_hrp_cj, ini, fim)
+            if m_hrp:
+                linhas_ciclo.append({
+                    "Ativo/Carteira": "🔷 HRP+BL",
+                    "Retorno": f"{m_hrp['acum']:+.1f}%",
+                    "Vol. a.a.": f"{m_hrp['vol']:.1f}%",
+                    "Max DD": f"{m_hrp['dd']:.1f}%",
+                })
+            if tem_custom_cj and ret_cust_cj is not None:
+                m_cust = metricas_periodo(ret_cust_cj, ini, fim)
+                if m_cust:
+                    linhas_ciclo.append({
+                        "Ativo/Carteira": "🔶 Customizado",
+                        "Retorno": f"{m_cust['acum']:+.1f}%",
+                        "Vol. a.a.": f"{m_cust['vol']:.1f}%",
+                        "Max DD": f"{m_cust['dd']:.1f}%",
+                    })
+            # CDI como referência
+            m_cdi = metricas_periodo(cdi_aligned, ini, fim)
+            if m_cdi:
+                linhas_ciclo.append({
+                    "Ativo/Carteira": "⚪ CDI",
+                    "Retorno": f"{m_cdi['acum']:+.1f}%",
+                    "Vol. a.a.": "~0%",
+                    "Max DD": "0%",
+                })
+            # Ativos individuais
+            for cfg in ASSET_CFG:
+                m_a = metricas_periodo(rets_ativos_cj[cfg["name"]], ini, fim)
+                if m_a:
+                    linhas_ciclo.append({
+                        "Ativo/Carteira": cfg["name"],
+                        "Retorno": f"{m_a['acum']:+.1f}%",
+                        "Vol. a.a.": f"{m_a['vol']:.1f}%",
+                        "Max DD": f"{m_a['dd']:.1f}%",
+                    })
+
+            df_ciclo = pd.DataFrame(linhas_ciclo).set_index("Ativo/Carteira")
+            st.dataframe(df_ciclo, use_container_width=True)
+
+        # ── Síntese: média de todos os ciclos por tipo ─────────────────────────
+        st.markdown("<div class='section-title' style='margin-top:2rem'>"
+                    "síntese — comportamento médio por tipo de ciclo</div>",
+                    unsafe_allow_html=True)
+
+        for tipo_sint in ["Corte", "Alta"]:
+            ciclos_tipo = [c for c in ciclos if c["tipo"] == tipo_sint]
+            if not ciclos_tipo:
+                continue
+            emoji = "📉" if tipo_sint == "Corte" else "📈"
+            cor_s = "#1D9E75" if tipo_sint == "Corte" else "#E24B4A"
+
+            # Média de retorno de cada ativo across todos os ciclos desse tipo
+            medias = {}
+            for cfg in ASSET_CFG:
+                rets_ciclo = []
+                for c in ciclos_tipo:
+                    m = metricas_periodo(rets_ativos_cj[cfg["name"]], c["inicio"], c["fim"])
+                    if m:
+                        rets_ciclo.append(m["acum"])
+                if rets_ciclo:
+                    medias[cfg["name"]] = np.mean(rets_ciclo)
+
+            # HRP+BL médio
+            rets_hrp_ciclo = [metricas_periodo(ret_hrp_cj, c["inicio"], c["fim"])["acum"]
+                              for c in ciclos_tipo
+                              if metricas_periodo(ret_hrp_cj, c["inicio"], c["fim"])]
+            hrp_medio = np.mean(rets_hrp_ciclo) if rets_hrp_ciclo else 0
+
+            ranking = sorted(medias.items(), key=lambda x: x[1], reverse=True)
+
+            st.markdown(
+                f"<div style='margin-top:1rem'><span style='font-size:14px;font-weight:600;"
+                f"color:{cor_s}'>{emoji} Em ciclos de {tipo_sint} "
+                f"({len(ciclos_tipo)} ciclos)</span></div>",
+                unsafe_allow_html=True
+            )
+            txt = f"**HRP+BL** rendeu em média **{hrp_medio:+.1f}%** por ciclo de {tipo_sint.lower()}.\n\n"
+            txt += "Ranking dos ativos (retorno médio por ciclo):\n"
+            for i, (nome, media) in enumerate(ranking, 1):
+                emoji_r = "🟢" if media >= 0 else "🔴"
+                txt += f"{i}. {emoji_r} **{nome}**: {media:+.1f}%\n"
+            st.markdown(txt)
+
+        st.caption(
+            "Ciclos detectados automaticamente pela variação do CDI (média móvel 3m, "
+            "limiar de 0.15 p.p. em 3 meses, duração mínima 3 meses). "
+            "Configure os pesos na aba Rebalanceamento para incluir o Customizado."
+        )
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
