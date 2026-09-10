@@ -692,36 +692,38 @@ with st.sidebar:
 @st.cache_data(show_spinner=False)
 def load_from_repo(filename):
     """Tenta carregar arquivo da pasta dados/ do repositório.
-    Suporta múltiplas extensões automaticamente.
+    Suporta múltiplas extensões e variações de nome automaticamente.
     """
     import os
     bases = ["dados", "data", "."]
     exts  = ["", ".csv", ".xls", ".xlsx"]
+    # Testar variações do nome para robustez (ex: IDkA com/sem "A" final)
+    name_variants = [filename]
+    if filename == "IDKAPRE2":
+        name_variants += ["IDKAPRE2A", "IDKAPRE2a", "IDkAPRE2", "IDKA_PRE2"]
+
     for base in bases:
-        for ext in exts:
-            path = os.path.join(base, filename + ext) if ext else os.path.join(base, filename)
-            if os.path.exists(path):
+        for fname in name_variants:
+            for ext in exts:
+                path = os.path.join(base, fname + ext) if ext else os.path.join(base, fname)
+                if not os.path.exists(path):
+                    continue
                 try:
                     if path.endswith(".csv"):
-                        # Detectar separador
                         with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
                             sample = f.read(2048)
                         sep = ";" if sample.count(";") > sample.count(",") else ","
                         df = pd.read_csv(path, sep=sep, engine="python")
                     elif path.endswith((".xls", ".xlsx")):
-                        # Detecta o formato REAL lendo os primeiros bytes
-                        # (arquivos .xls da ANBIMA são frequentemente .xlsx renomeados)
+                        # Detecta o formato REAL pelos primeiros bytes
                         with open(path, "rb") as _fb:
                             magic = _fb.read(4)
                         df = None
-                        # PK\x03\x04 = ZIP = xlsx moderno → openpyxl
-                        if magic[:2] == b"PK":
+                        if magic[:2] == b"PK":            # ZIP = xlsx moderno
                             df = pd.read_excel(path, engine="openpyxl")
-                        # \xD0\xCF = OLE2 = xls antigo → xlrd
-                        elif magic[:2] == b"\xd0\xcf":
+                        elif magic[:2] == b"\xd0\xcf":    # OLE2 = xls antigo
                             df = pd.read_excel(path, engine="xlrd")
-                        else:
-                            # HTML/XML disfarçado → tentar como HTML
+                        else:                              # HTML disfarçado
                             try:
                                 tabelas = pd.read_html(path)
                                 df = tabelas[0] if tabelas else None
@@ -835,7 +837,7 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
         "IMA-B5+":   "IMAB5MAIS",
         "IHFA":      "IHFA",
         "IDA-DI":    "IDADI",
-        "IDkA Pré 2A": "IDKAPRE2",
+        "IDkA Pré 2A": "IDKAPRE2",  # aceita IDKAPRE2 e IDKAPRE2A (ver load_from_repo)
         "Ibovespa":  "Ibovespa",
     }
 
