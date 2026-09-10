@@ -6301,8 +6301,18 @@ with tab14:
         if ultimo_mes.year == hoje.year and ultimo_mes.month == hoje.month:
             cdi_para_ciclo = cdi_para_ciclo.iloc[:-1]
 
-    cdi_anual = ((1 + cdi_para_ciclo) ** 12 - 1) * 100
-    cdi_suave = cdi_anual.rolling(3, min_periods=1).mean()
+    # Anualização robusta: o CDI mensal varia com o número de dias úteis do mês
+    # (19 a 23), então anualizar um único mês por ^12 distorce (dá 12.5% a 15.3%).
+    # Solução: usar o CDI ACUMULADO dos últimos 12 meses como taxa anual real.
+    # Isso reflete exatamente quanto o CDI rendeu no ano — sem distorção de dias úteis.
+    cdi_anual = (1 + cdi_para_ciclo).rolling(12, min_periods=6).apply(
+        lambda x: x.prod() - 1, raw=True
+    ) * 100
+    # Para os primeiros meses (sem 12m de histórico), usar anualização simples
+    cdi_anual_simples = ((1 + cdi_para_ciclo) ** 12 - 1) * 100
+    cdi_anual = cdi_anual.fillna(cdi_anual_simples)
+    # Suavização leve para o gráfico
+    cdi_suave = cdi_anual.rolling(2, min_periods=1).mean()
     variacao  = cdi_suave.diff(3)
     LIMIAR = 0.15
     direcao = pd.Series(0, index=cdi_suave.index)
