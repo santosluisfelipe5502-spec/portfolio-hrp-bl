@@ -6301,20 +6301,20 @@ with tab14:
         if ultimo_mes.year == hoje.year and ultimo_mes.month == hoje.month:
             cdi_para_ciclo = cdi_para_ciclo.iloc[:-1]
 
-    # Anualização robusta: o CDI mensal varia com o número de dias úteis do mês
-    # (19 a 23), então anualizar um único mês por ^12 distorce (dá 12.5% a 15.3%).
-    # Solução: usar o CDI ACUMULADO dos últimos 12 meses como taxa anual real.
-    # Isso reflete exatamente quanto o CDI rendeu no ano — sem distorção de dias úteis.
-    cdi_anual = (1 + cdi_para_ciclo).rolling(12, min_periods=6).apply(
-        lambda x: x.prod() - 1, raw=True
-    ) * 100
-    # Para os primeiros meses (sem 12m de histórico), usar anualização simples
-    cdi_anual_simples = ((1 + cdi_para_ciclo) ** 12 - 1) * 100
-    cdi_anual = cdi_anual.fillna(cdi_anual_simples)
-    # Suavização leve para o gráfico
-    cdi_suave = cdi_anual.rolling(2, min_periods=1).mean()
-    variacao  = cdi_suave.diff(3)
-    LIMIAR = 0.15
+    # Anualização da taxa CDI para cada mês (taxa INSTANTÂNEA, não média retroativa).
+    # O CDI mensal varia com dias úteis (19-23), causando ruído mês a mês.
+    # Solução: anualizar cada mês por ^12 e suavizar com média móvel de 3 meses.
+    # Isso dá a taxa ATUAL de juros (não a média dos últimos 12m, que ficaria
+    # defasada quando a Selic muda de patamar).
+    cdi_anual_bruto = ((1 + cdi_para_ciclo) ** 12 - 1) * 100
+    # Média móvel de 3 meses remove o ruído de dias úteis sem defasar demais
+    cdi_suave = cdi_anual_bruto.rolling(3, min_periods=1, center=True).mean()
+
+    # Detecção de direção: comparar taxa suavizada com 4 meses atrás.
+    # Limiar de 0.30 p.p. em 4 meses captura cortes/altas graduais (0.25 p.p./reunião)
+    # sem disparar por ruído. Selic costuma se mover em passos de 0.25-0.50 p.p.
+    variacao  = cdi_suave.diff(4)
+    LIMIAR = 0.30
     direcao = pd.Series(0, index=cdi_suave.index)
     direcao[variacao > LIMIAR] = 1
     direcao[variacao < -LIMIAR] = -1
@@ -6325,14 +6325,14 @@ with tab14:
         ini_idx = direcao.index[0]
         for i in range(1, len(direcao)):
             if direcao.iloc[i] != atual_dir:
-                if atual_dir != 0 and len(direcao[ini_idx:direcao.index[i-1]]) >= 3:
+                if atual_dir != 0 and len(direcao[ini_idx:direcao.index[i-1]]) >= 2:
                     ciclos.append({"tipo": "Alta" if atual_dir==1 else "Corte",
                                    "inicio": ini_idx, "fim": direcao.index[i-1],
                                    "cdi_ini": cdi_suave[ini_idx],
                                    "cdi_fim": cdi_suave[direcao.index[i-1]]})
                 atual_dir = direcao.iloc[i]
                 ini_idx = direcao.index[i]
-        if atual_dir != 0 and len(direcao[ini_idx:direcao.index[-1]]) >= 3:
+        if atual_dir != 0 and len(direcao[ini_idx:direcao.index[-1]]) >= 2:
             ciclos.append({"tipo": "Alta" if atual_dir==1 else "Corte",
                            "inicio": ini_idx, "fim": direcao.index[-1],
                            "cdi_ini": cdi_suave[ini_idx],
@@ -6416,18 +6416,24 @@ with tab14:
             f"<div style='padding:8px 12px;border-radius:6px;background:#f8f7f4;"
             f"border-left:3px solid #888780'><span style='font-size:11px;color:#888780'>"
             f"CDI ATUAL (últ. fechado)</span><br><strong style='font-size:20px;color:#1a1a18'>"
-            f"{cdi_suave.iloc[-1]:.1f}%</strong><br>"
-            f"<span style='font-size:11px;color:#888780'>{cdi_suave.index[-1].strftime('%b/%Y')}</span></div>",
+            f"{cdi_anual_bruto.iloc[-1]:.1f}%</strong><br>"
+            f"<span style='font-size:11px;color:#888780'>{cdi_anual_bruto.index[-1].strftime('%b/%Y')}</span></div>",
             unsafe_allow_html=True)
-        # Regime atual (último movimento detectado)
+        # Regime atual: olhar a variação do CDI nos últimos meses diretamente,
+        # não o último ciclo fechado (que pode estar desatualizado).
         regime_atual_txt = "Estável"
         cor_reg = "#888780"
-        if ciclos:
-            ultimo_ciclo = ciclos[-1]
-            # Se o último ciclo termina perto do fim da série, estamos nele
-            if (cdi_suave.index[-1] - ultimo_ciclo["fim"]).days < 120:
-                regime_atual_txt = ultimo_ciclo["tipo"]
-                cor_reg = "#E24B4A" if ultimo_ciclo["tipo"] == "Alta" else "#1D9E75"
+        # Comparar CDI atual com 4-6 meses atrás
+        if len(cdi_suave) >= 6:
+            cdi_hoje = cdi_anual_bruto.iloc[-1]
+            cdi_6m_atras = cdi_anual_bruto.iloc[-6]
+            delta_recente = cdi_hoje - cdi_6m_atras
+            if delta_recente < -0.30:
+                regime_atual_txt = "Corte"
+                cor_reg = "#1D9E75"
+            elif delta_recente > 0.30:
+                regime_atual_txt = "Alta"
+                cor_reg = "#E24B4A"
         cs4.markdown(
             f"<div style='padding:8px 12px;border-radius:6px;background:{cor_reg}15;"
             f"border-left:3px solid {cor_reg}'><span style='font-size:11px;color:#888780'>"
