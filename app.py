@@ -708,20 +708,27 @@ def load_from_repo(filename):
                             sample = f.read(2048)
                         sep = ";" if sample.count(";") > sample.count(",") else ","
                         df = pd.read_csv(path, sep=sep, engine="python")
-                    elif path.endswith(".xls"):
-                        # .xls antigo precisa do engine xlrd (openpyxl só lê .xlsx)
-                        try:
+                    elif path.endswith((".xls", ".xlsx")):
+                        # Detecta o formato REAL lendo os primeiros bytes
+                        # (arquivos .xls da ANBIMA são frequentemente .xlsx renomeados)
+                        with open(path, "rb") as _fb:
+                            magic = _fb.read(4)
+                        df = None
+                        # PK\x03\x04 = ZIP = xlsx moderno → openpyxl
+                        if magic[:2] == b"PK":
+                            df = pd.read_excel(path, engine="openpyxl")
+                        # \xD0\xCF = OLE2 = xls antigo → xlrd
+                        elif magic[:2] == b"\xd0\xcf":
                             df = pd.read_excel(path, engine="xlrd")
-                        except Exception:
-                            # Alguns .xls da ANBIMA são HTML disfarçado ou xlsx renomeado
+                        else:
+                            # HTML/XML disfarçado → tentar como HTML
                             try:
-                                df = pd.read_excel(path, engine="openpyxl")
-                            except Exception:
-                                # Última tentativa: ler como HTML (ANBIMA às vezes exporta assim)
                                 tabelas = pd.read_html(path)
                                 df = tabelas[0] if tabelas else None
-                                if df is None:
-                                    continue
+                            except Exception:
+                                df = None
+                        if df is None:
+                            continue
                     else:
                         df = pd.read_excel(path, engine="openpyxl")
                     return df, path
