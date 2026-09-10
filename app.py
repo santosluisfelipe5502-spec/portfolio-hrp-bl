@@ -971,6 +971,20 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     else:
         series["Bitcoin"] = demo["Bitcoin"]
 
+    # ── DIAGNÓSTICO TEMPORÁRIO — remover depois ───────────────────────────────
+    _diag_info = []
+    for _cfg in ASSET_CFG:
+        _nome = _cfg["name"]
+        _s = series.get(_nome)
+        if _s is not None and len(_s) > 0:
+            _ini = _s.index[0].strftime("%b/%Y")
+            _fim = _s.index[-1].strftime("%b/%Y")
+            _n   = len(_s)
+            _diag_info.append(f"{_nome}: {_ini}→{_fim} ({_n} pts)")
+        else:
+            _diag_info.append(f"{_nome}: VAZIO")
+    st.session_state["_diag_series"] = _diag_info
+
     # ── Séries diárias para monitoramento ────────────────────────────────────
     # Carrega as séries no formato diário (sem agregar para mensal)
     daily_series = {}
@@ -1164,6 +1178,16 @@ with col_h1:
         {ptax_src} &nbsp;·&nbsp; {real_tag}
     </p>
     """, unsafe_allow_html=True)
+
+    # ── PAINEL DE DIAGNÓSTICO TEMPORÁRIO ──────────────────────────────────────
+    with st.expander("🔧 Diagnóstico de dados (temporário)", expanded=True):
+        st.markdown("**O que cada ativo carregou (início → fim, nº de pontos):**")
+        for _linha in st.session_state.get("_diag_series", []):
+            st.markdown(f"<span style='font-family:monospace;font-size:12px'>{_linha}</span>",
+                        unsafe_allow_html=True)
+        st.caption("Ativos ANBIMA que terminam em 'Apr/2026' com 208 pts = dados SIMULADOS "
+                   "(arquivo não lido). Se terminam em 'Sep/2026' = dados REAIS. "
+                   "Ibovespa/Internac./Ouro/Bitcoin vêm do Yahoo e podem variar.")
 with col_h2:
     perfil_badge_cor = {
         "HRP+BL Original": "badge-blue",
