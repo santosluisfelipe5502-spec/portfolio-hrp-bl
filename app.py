@@ -708,6 +708,20 @@ def load_from_repo(filename):
                             sample = f.read(2048)
                         sep = ";" if sample.count(";") > sample.count(",") else ","
                         df = pd.read_csv(path, sep=sep, engine="python")
+                    elif path.endswith(".xls"):
+                        # .xls antigo precisa do engine xlrd (openpyxl só lê .xlsx)
+                        try:
+                            df = pd.read_excel(path, engine="xlrd")
+                        except Exception:
+                            # Alguns .xls da ANBIMA são HTML disfarçado ou xlsx renomeado
+                            try:
+                                df = pd.read_excel(path, engine="openpyxl")
+                            except Exception:
+                                # Última tentativa: ler como HTML (ANBIMA às vezes exporta assim)
+                                tabelas = pd.read_html(path)
+                                df = tabelas[0] if tabelas else None
+                                if df is None:
+                                    continue
                     else:
                         df = pd.read_excel(path, engine="openpyxl")
                     return df, path
