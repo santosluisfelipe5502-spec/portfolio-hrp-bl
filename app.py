@@ -163,6 +163,36 @@ label,.stSlider label,.stCheckbox label,.stSelectbox label,
 .stTabs [aria-selected="true"]{color:#1a1a18 !important;font-weight:500 !important}
 [data-testid="stSelectbox"]>div>div{background:#ffffff !important;color:#1a1a18 !important;border:1px solid #e8e6e0 !important}
 [data-testid="stSelectbox"] svg{fill:#1a1a18 !important}
+/* ── Inputs no corpo principal: fundo branco, texto escuro ── */
+[data-testid="stNumberInput"] input{background:#ffffff !important;color:#1a1a18 !important;border:1px solid #e8e6e0 !important}
+[data-testid="stNumberInput"] button{background:#f8f7f4 !important;color:#1a1a18 !important}
+[data-testid="stNumberInput"] button svg{fill:#1a1a18 !important}
+[data-testid="stDateInput"] input{background:#ffffff !important;color:#1a1a18 !important;border:1px solid #e8e6e0 !important}
+[data-testid="stDateInput"] svg{fill:#1a1a18 !important}
+[data-testid="stTextInput"] input{background:#ffffff !important;color:#1a1a18 !important;border:1px solid #e8e6e0 !important}
+[data-testid="stTextArea"] textarea{background:#ffffff !important;color:#1a1a18 !important;border:1px solid #e8e6e0 !important}
+[data-baseweb="input"]{background:#ffffff !important}
+[data-baseweb="input"] input{background:#ffffff !important;color:#1a1a18 !important}
+[data-baseweb="base-input"]{background:#ffffff !important}
+[data-baseweb="base-input"] input{background:#ffffff !important;color:#1a1a18 !important}
+/* Calendário do date_input */
+[data-baseweb="calendar"]{background:#ffffff !important}
+[data-baseweb="calendar"] *{color:#1a1a18 !important}
+[data-baseweb="calendar"] button{background:#ffffff !important;color:#1a1a18 !important}
+[data-baseweb="calendar"] [aria-selected="true"]{background:#378ADD !important;color:#ffffff !important}
+/* Multiselect (janelas de análise) */
+[data-testid="stMultiSelect"]>div>div{background:#ffffff !important;color:#1a1a18 !important;border:1px solid #e8e6e0 !important}
+[data-testid="stMultiSelect"] svg{fill:#1a1a18 !important}
+[data-testid="stMultiSelect"] span{color:#1a1a18 !important}
+[data-baseweb="tag"]{background:#378ADD !important}
+[data-baseweb="tag"] span{color:#ffffff !important}
+/* Slider - números e valores */
+[data-testid="stSlider"] [data-testid="stThumbValue"]{color:#1a1a18 !important}
+[data-testid="stSlider"] div{color:#1a1a18 !important}
+/* Radio e outros */
+[data-testid="stRadio"] label{color:#1a1a18 !important}
+[data-baseweb="select"]{background:#ffffff !important}
+[data-baseweb="select"]>div{background:#ffffff !important;color:#1a1a18 !important}
 [data-baseweb="popover"],[data-baseweb="menu"]{background:#ffffff !important}
 [data-baseweb="popover"] *,[data-baseweb="menu"] *{color:#1a1a18 !important;background:#ffffff !important}
 [data-baseweb="option"]{background:#ffffff !important;color:#1a1a18 !important}
@@ -4452,9 +4482,11 @@ with tab7:
     # Usar go.Table para renderizar células coloridas individualmente
     header_cols = ["Ativo"] + [str(a) for a in anos_cols] + ["Ann.", "Vol."]
 
-    cell_vals   = [ativos_list]
+    # Nomes com espaço inicial para padding (alinhados à esquerda)
+    nomes_fmt   = [f"  {a}" for a in ativos_list]
+    cell_vals   = [nomes_fmt]
     cell_colors = [["#1a1a18"] * len(ativos_list)]
-    cell_fonts  = [["white"] * len(ativos_list)]
+    cell_fonts  = [["#ffffff"] * len(ativos_list)]
 
     for ano in anos_cols:
         col_vals  = df_heat.loc[ano]
@@ -4491,20 +4523,23 @@ with tab7:
         cell_colors.append(col_colors_t)
         cell_fonts.append(col_font_t)
 
+    # Alinhamento: nomes à esquerda (1ª coluna), valores centralizados
+    aligns = ["left"] + ["center"]*(len(cell_vals)-1)
+
     fig_heat = go.Figure(go.Table(
-        columnwidth=[120] + [60]*len(anos_cols) + [70, 70],
+        columnwidth=[160] + [58]*len(anos_cols) + [68, 68],
         header=dict(
             values=["<b>"+h+"</b>" for h in header_cols],
             fill_color="#1a1a18",
             font=dict(color="white", size=10, family="Helvetica"),
-            align="center",
+            align=["left"] + ["center"]*(len(header_cols)-1),
             height=32,
         ),
         cells=dict(
             values=cell_vals,
             fill_color=cell_colors,
             font=dict(color=cell_fonts, size=10, family="Helvetica"),
-            align="center",
+            align=aligns,
             height=36,
             line=dict(color="#f8f7f4", width=2),
         ),
