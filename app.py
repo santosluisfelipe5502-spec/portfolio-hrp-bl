@@ -6700,6 +6700,166 @@ with tab14:
                 st.success("✅ Correlação moderada (<0.85) — o customizado tem um perfil de "
                            "comportamento genuinamente distinto do HRP+BL.")
 
+        # ══════════════════════════════════════════════════════════════════════
+        # ── ANÁLISES AVANÇADAS DE CICLO ────────────────────────────────────────
+        # ══════════════════════════════════════════════════════════════════════
+        st.divider()
+
+        # ── 1. SENSIBILIDADE A JUROS (duration efetiva medida) ────────────────
+        st.markdown("<div class='section-title'>sensibilidade a juros — duration efetiva</div>",
+                    unsafe_allow_html=True)
+        st.markdown(
+            "Quanto cada ativo se move, em média, para cada **1 ponto percentual** de variação "
+            "no CDI. Valores negativos = o ativo sobe quando o juro cai (típico de prefixados longos)."
+        )
+
+        # Variação mensal do CDI (em p.p.) vs retorno de cada ativo
+        cdi_var_pp = cdi_suave.diff()  # variação da taxa em p.p.
+        sens_data = []
+        for cfg in ASSET_CFG:
+            r_ativo = rets_ativos_cj[cfg["name"]] * 100  # retorno em %
+            # Alinhar
+            idx_s = cdi_var_pp.index.intersection(r_ativo.index)
+            x = cdi_var_pp.reindex(idx_s).dropna()
+            y = r_ativo.reindex(idx_s).dropna()
+            idx_c = x.index.intersection(y.index)
+            if len(idx_c) < 12:
+                continue
+            x2, y2 = x.reindex(idx_c), y.reindex(idx_c)
+            # Regressão linear simples: beta = cov(x,y)/var(x)
+            if x2.var() > 0:
+                beta = np.cov(x2, y2)[0, 1] / x2.var()
+                sens_data.append((cfg["name"], beta, cfg["color"]))
+
+        if sens_data:
+            sens_data.sort(key=lambda x: x[1])
+            fig_sens = go.Figure(go.Bar(
+                x=[s[1] for s in sens_data],
+                y=[s[0] for s in sens_data],
+                orientation="h",
+                marker_color=[s[2] for s in sens_data],
+                text=[f"{s[1]:+.2f}" for s in sens_data],
+                textposition="outside",
+                hovertemplate="%{y}<br>Sensibilidade: %{x:+.2f}%% por +1 p.p. CDI<extra></extra>",
+            ))
+            fig_sens.update_layout(
+                plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                height=340, font=dict(color="#1a1a18"),
+                margin=dict(l=0, r=40, t=8, b=0),
+                xaxis=dict(title="Retorno (%) por +1 p.p. de CDI",
+                           gridcolor="#e8e6e0", zerolinecolor="#888780",
+                           tickfont=dict(color="#444441"), color="#1a1a18"),
+                yaxis=dict(tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+            )
+            st.plotly_chart(fig_sens, use_container_width=True)
+            mais_sens = min(sens_data, key=lambda x: x[1])
+            st.caption(
+                f"**{mais_sens[0]}** é o mais sensível a juros — cai mais quando a Selic sobe "
+                f"e sobe mais quando ela cai. Ativos pós-fixados (IDA-DI) ficam próximos de zero."
+            )
+
+        # ── 2. TEMPO DE RECUPERAÇÃO PÓS-INÍCIO DE CICLO DE ALTA ────────────────
+        st.markdown("<div class='section-title' style='margin-top:1.5rem'>"
+                    "tempo de recuperação após início de ciclo de alta</div>",
+                    unsafe_allow_html=True)
+        st.markdown(
+            "Quando um ciclo de alta começa, quanto tempo (em meses) as carteiras levam "
+            "para voltar ao valor que tinham no início do ciclo."
+        )
+
+        ciclos_alta_rec = [c for c in ciclos if c["tipo"] == "Alta"]
+        if ciclos_alta_rec:
+            def tempo_recuperacao(ret_series, ini):
+                """Meses até recuperar o valor inicial após 'ini'."""
+                fut = ret_series[ret_series.index >= ini]
+                if len(fut) < 2:
+                    return None
+                cum = (1 + fut).cumprod()
+                pico_ini = cum.iloc[0]
+                # Achar primeiro drawdown e depois recuperação
+                min_val = cum.iloc[0]
+                for i in range(1, len(cum)):
+                    if cum.iloc[i] < min_val:
+                        min_val = cum.iloc[i]
+                    # Se já caiu e recuperou o nível inicial
+                    if min_val < pico_ini * 0.999 and cum.iloc[i] >= pico_ini:
+                        return i
+                return None  # não recuperou no período
+
+            rec_rows = []
+            for carteira_nome, carteira_ret in [("🔷 HRP+BL", port_ret)] +                 ([("🔶 Customizado", ret_cust_cj)] if ret_cust_cj is not None else []):
+                tempos = []
+                for c in ciclos_alta_rec:
+                    t = tempo_recuperacao(carteira_ret, c["inicio"])
+                    if t is not None:
+                        tempos.append(t)
+                if tempos:
+                    rec_rows.append({
+                        "Carteira": carteira_nome,
+                        "Recuperação média": f"{np.mean(tempos):.0f} meses",
+                        "Mais rápida": f"{min(tempos)} meses",
+                        "Mais lenta": f"{max(tempos)} meses",
+                    })
+                else:
+                    rec_rows.append({
+                        "Carteira": carteira_nome,
+                        "Recuperação média": "não caiu / recuperou logo",
+                        "Mais rápida": "—", "Mais lenta": "—",
+                    })
+            st.dataframe(pd.DataFrame(rec_rows).set_index("Carteira"),
+                         use_container_width=True)
+            st.caption(
+                "Recuperação = meses do início do ciclo de alta até a carteira voltar ao "
+                "valor inicial. 'Não caiu' significa que a carteira foi resiliente ao aperto monetário."
+            )
+        else:
+            st.info("Nenhum ciclo de alta detectado para calcular tempo de recuperação.")
+
+        # ── 3. TIMING — retorno nos primeiros meses de cada tipo de ciclo ─────
+        st.markdown("<div class='section-title' style='margin-top:1.5rem'>"
+                    "timing — retorno nos primeiros 6 meses de cada ciclo</div>",
+                    unsafe_allow_html=True)
+        st.markdown(
+            "Retorno médio de cada ativo nos **6 primeiros meses** após o início de um ciclo. "
+            "Ajuda a decidir o que reforçar quando o ciclo começa a virar."
+        )
+
+        def ret_primeiros_meses(ret_series, ini, n_meses=6):
+            fut = ret_series[ret_series.index >= ini].head(n_meses)
+            return ((1 + fut).prod() - 1) * 100 if len(fut) >= 2 else None
+
+        col_tc, col_ta = st.columns(2)
+        for tipo_t, col_t in [("Corte", col_tc), ("Alta", col_ta)]:
+            ciclos_t = [c for c in ciclos if c["tipo"] == tipo_t]
+            if not ciclos_t:
+                continue
+            emoji = "📉" if tipo_t == "Corte" else "📈"
+            cor_t = "#1D9E75" if tipo_t == "Corte" else "#E24B4A"
+
+            medias_timing = {}
+            for cfg in ASSET_CFG:
+                vals = [ret_primeiros_meses(rets_ativos_cj[cfg["name"]], c["inicio"])
+                        for c in ciclos_t]
+                vals = [v for v in vals if v is not None]
+                if vals:
+                    medias_timing[cfg["name"]] = np.mean(vals)
+            ranking_t = sorted(medias_timing.items(), key=lambda x: x[1], reverse=True)
+
+            with col_t:
+                st.markdown(
+                    f"<div style='padding:8px 12px;border-radius:6px;background:{cor_t}15;"
+                    f"border-left:3px solid {cor_t};margin-bottom:8px'>"
+                    f"<span style='font-size:13px;font-weight:600;color:{cor_t}'>"
+                    f"{emoji} Início de {tipo_t}</span></div>",
+                    unsafe_allow_html=True
+                )
+                linhas_t = []
+                for nome, m in ranking_t[:5]:  # top 5
+                    emoji_r = "🟢" if m >= 0 else "🔴"
+                    linhas_t.append({"": f"{emoji_r} {nome}", "6m": f"{m:+.1f}%"})
+                st.dataframe(pd.DataFrame(linhas_t).set_index(""),
+                             use_container_width=True)
+
         st.caption(
             "Ciclos detectados pela variação do CDI (média móvel 3m, limiar 0.15 p.p., "
             "mínimo 3 meses). Configure pesos na aba Rebalanceamento para incluir o Customizado."
