@@ -6301,16 +6301,33 @@ with tab14:
         if ultimo_mes.year == hoje.year and ultimo_mes.month == hoje.month:
             cdi_para_ciclo = cdi_para_ciclo.iloc[:-1]
 
-    # Anualização da taxa CDI para cada mês (taxa INSTANTÂNEA, não média retroativa).
-    # O CDI mensal varia com dias úteis (19-23), causando ruído mês a mês.
-    # Solução: anualizar cada mês por ^12 e suavizar com média móvel de 3 meses.
-    # Isso dá a taxa ATUAL de juros (não a média dos últimos 12m, que ficaria
-    # defasada quando a Selic muda de patamar).
-    cdi_anual_bruto = ((1 + cdi_para_ciclo) ** 12 - 1) * 100
-    # Média móvel de 3 meses remove o ruído de dias úteis sem defasar demais
-    cdi_suave = cdi_anual_bruto.rolling(3, min_periods=1, center=True).mean()
+    # Anualização correta da taxa CDI: o CDI mensal do BCB é a soma dos dias
+    # ÚTEIS do mês (19 a 23), então anualizar por ^12 amplifica o ruído
+    # (dá 11.9% a 15.4% para uma Selic real de 14%). Solução: estimar os dias
+    # úteis de cada mês pelo calendário, converter para taxa diária equivalente
+    # e anualizar por 252 dias úteis (convenção do mercado brasileiro).
+    def _dias_uteis_mes(ts):
+        try:
+            inicio = ts.replace(day=1)
+            return max(1, len(pd.bdate_range(inicio, ts)))
+        except Exception:
+            return 21
 
-    # Detecção de direção: comparar taxa suavizada com 4 meses atrás.
+    cdi_anual_bruto = pd.Series(index=cdi_para_ciclo.index, dtype=float)
+    for _d in cdi_para_ciclo.index:
+        _du = _dias_uteis_mes(_d)
+        _cdi_m = cdi_para_ciclo[_d]
+        if pd.notna(_cdi_m) and _cdi_m > -1:
+            _taxa_dia = (1 + _cdi_m) ** (1 / _du) - 1
+            cdi_anual_bruto[_d] = ((1 + _taxa_dia) ** 252 - 1) * 100
+        else:
+            cdi_anual_bruto[_d] = np.nan
+    cdi_anual_bruto = cdi_anual_bruto.ffill()
+
+    # Suavização leve (trailing, não centrada) para não distorcer a ponta final
+    cdi_suave = cdi_anual_bruto.rolling(3, min_periods=1).mean()
+
+    # Detecção de direção: comparar taxa com 4 meses atrás.
     # Limiar de 0.30 p.p. em 4 meses captura cortes/altas graduais (0.25 p.p./reunião)
     # sem disparar por ruído. Selic costuma se mover em passos de 0.25-0.50 p.p.
     variacao  = cdi_suave.diff(4)
