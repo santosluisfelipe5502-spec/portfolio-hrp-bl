@@ -1334,7 +1334,7 @@ custom_valid_hdr = abs(total_cw_hdr - 1.0) < 0.02
 
 if custom_valid_hdr:
     c_ret = sum(
-        custom_w_hdr[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+        custom_w_hdr[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
         for a in ASSET_CFG
     )
     c_cum = (1 + c_ret).cumprod() * 100
@@ -2209,12 +2209,12 @@ with tab1:
     custom_valid = abs(total_custom - 1.0) < 0.02
 
     # Calcular portfólio customizado
-    custom_ret = sum(custom_w[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+    custom_ret = sum(custom_w[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
                      for a in ASSET_CFG)
     custom_cum = (1 + custom_ret).cumprod() * 100
 
     # Calcular 1/N
-    eq_ret = sum((1/len(ASSET_CFG)) * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+    eq_ret = sum((1/len(ASSET_CFG)) * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
                  for a in ASSET_CFG)
     eq_cum = (1 + eq_ret).cumprod() * 100
 
@@ -3829,7 +3829,7 @@ with tab6:
         custom_w_ev[cfg["name"]] = st.session_state.get(key, cfg["w"] * 100) / 100
 
     custom_ret_ev = sum(
-        custom_w_ev[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+        custom_w_ev[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
         for a in ASSET_CFG
     )
     custom_cum_ev = (1 + custom_ret_ev).cumprod() * 100
@@ -3852,7 +3852,7 @@ with tab6:
         r_cdi  = period_ret(cdi_cum,     ev["start"], ev["end"])
         r_ibov = period_ret(ibov_cum,    ev["start"], ev["end"])
         r_cust = period_ret(custom_cum_ev, ev["start"], ev["end"])
-        eq_cum_ev = (1 + sum((1/len(ASSET_CFG))*series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+        eq_cum_ev = (1 + sum((1/len(ASSET_CFG))*series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
                               for a in ASSET_CFG)).cumprod() * 100
         r_igual = period_ret(eq_cum_ev, ev["start"], ev["end"])
 
@@ -4256,12 +4256,19 @@ with tab7:
             for cfg in ASSET_CFG:
                 if cfg["name"] not in ativos_sel:
                     continue
-                s_full = series[cfg["name"]]["valor"].reindex(common_idx).ffill()
-                s_cum_full = (s_full / s_full.iloc[0]) * 100
+                # Usar a série própria do ativo (não reindexada ao common_idx),
+                # assim ativos de início tardio (Bitcoin) usam seu próprio histórico
+                s_full = series[cfg["name"]]["valor"].dropna()
                 try:
-                    v0 = s_cum_full[s_cum_full.index <= pd.Timestamp(ev["start"])]
-                    v1 = s_cum_full[s_cum_full.index <= pd.Timestamp(ev["end"])]
-                    if len(v0) and len(v1):
+                    ev_ini = pd.Timestamp(ev["start"])
+                    ev_fim = pd.Timestamp(ev["end"])
+                    # Só calcula se o ativo já existia no início do evento
+                    if len(s_full) == 0 or s_full.index[0] > ev_ini:
+                        row_imp[cfg["name"]] = "—"
+                        continue
+                    v0 = s_full[s_full.index <= ev_ini]
+                    v1 = s_full[s_full.index <= ev_fim]
+                    if len(v0) and len(v1) and v0.iloc[-1] != 0:
                         r = round((v1.iloc[-1] / v0.iloc[-1] - 1) * 100, 2)
                         row_imp[cfg["name"]] = f"{r:+.1f}%"
                     else:
@@ -4572,7 +4579,7 @@ with tab8:
     custom_valid_t8 = abs(total_t8 - 1.0) < 0.02
 
     c_ret_t8 = sum(
-        custom_w_t8[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill()
+        custom_w_t8[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
         for a in ASSET_CFG
     ) if custom_valid_t8 else port_ret
 
@@ -5033,13 +5040,13 @@ with tab10:
     if custom_valid_jm:
         c_ret_jm = sum(
             custom_w_jm[a["name"]] * series[a["name"]]["valor"]
-            .pct_change().dropna().reindex(common_idx).ffill()
+            .pct_change().dropna().reindex(common_idx).ffill().fillna(0)
             for a in ASSET_CFG
         )
 
     # 1/N igual
     eq_ret_jm = sum((1/len(ASSET_CFG)) * series[a["name"]]["valor"]
-                    .pct_change().dropna().reindex(common_idx).ffill()
+                    .pct_change().dropna().reindex(common_idx).ffill().fillna(0)
                     for a in ASSET_CFG)
 
     def rolling_acum(ret_series, n):
