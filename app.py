@@ -6291,7 +6291,17 @@ with tab14:
     )
 
     # ── Detectar ciclos pela taxa CDI ─────────────────────────────────────────
-    cdi_anual = ((1 + cdi_aligned) ** 12 - 1) * 100
+    # Remover o último mês se estiver incompleto (mês corrente ainda não fechou),
+    # o que causaria uma queda artificial na taxa anualizada.
+    cdi_para_ciclo = cdi_aligned.copy()
+    hoje = pd.Timestamp.today()
+    ultimo_mes = cdi_para_ciclo.index[-1] if len(cdi_para_ciclo) > 0 else None
+    if ultimo_mes is not None:
+        # Se o último ponto é do mês corrente (ainda não fechou), remover
+        if ultimo_mes.year == hoje.year and ultimo_mes.month == hoje.month:
+            cdi_para_ciclo = cdi_para_ciclo.iloc[:-1]
+
+    cdi_anual = ((1 + cdi_para_ciclo) ** 12 - 1) * 100
     cdi_suave = cdi_anual.rolling(3, min_periods=1).mean()
     variacao  = cdi_suave.diff(3)
     LIMIAR = 0.15
@@ -6361,6 +6371,58 @@ with tab14:
                        title="Selic/CDI aprox. (% a.a.)"),
         )
         st.plotly_chart(fig_cj, use_container_width=True)
+
+        # ── Cards de estatísticas dos ciclos ──────────────────────────────────
+        ciclos_corte = [c for c in ciclos if c["tipo"] == "Corte"]
+        ciclos_alta  = [c for c in ciclos if c["tipo"] == "Alta"]
+
+        def dur_meses_ciclo(c):
+            return len(cdi_suave[c["inicio"]:c["fim"]])
+        def magnitude_ciclo(c):
+            return abs(c["cdi_fim"] - c["cdi_ini"])
+
+        cs1, cs2, cs3, cs4 = st.columns(4)
+        cs1.markdown(
+            f"<div style='padding:8px 12px;border-radius:6px;background:#1D9E7515;"
+            f"border-left:3px solid #1D9E75'><span style='font-size:11px;color:#888780'>"
+            f"CICLOS DE CORTE</span><br><strong style='font-size:20px;color:#1D9E75'>"
+            f"{len(ciclos_corte)}</strong>"
+            + (f"<br><span style='font-size:11px;color:#888780'>"
+               f"dur. média {np.mean([dur_meses_ciclo(c) for c in ciclos_corte]):.0f}m · "
+               f"−{np.mean([magnitude_ciclo(c) for c in ciclos_corte]):.1f} p.p.</span>"
+               if ciclos_corte else "")
+            + "</div>", unsafe_allow_html=True)
+        cs2.markdown(
+            f"<div style='padding:8px 12px;border-radius:6px;background:#E24B4A15;"
+            f"border-left:3px solid #E24B4A'><span style='font-size:11px;color:#888780'>"
+            f"CICLOS DE ALTA</span><br><strong style='font-size:20px;color:#E24B4A'>"
+            f"{len(ciclos_alta)}</strong>"
+            + (f"<br><span style='font-size:11px;color:#888780'>"
+               f"dur. média {np.mean([dur_meses_ciclo(c) for c in ciclos_alta]):.0f}m · "
+               f"+{np.mean([magnitude_ciclo(c) for c in ciclos_alta]):.1f} p.p.</span>"
+               if ciclos_alta else "")
+            + "</div>", unsafe_allow_html=True)
+        cs3.markdown(
+            f"<div style='padding:8px 12px;border-radius:6px;background:#f8f7f4;"
+            f"border-left:3px solid #888780'><span style='font-size:11px;color:#888780'>"
+            f"CDI ATUAL (últ. fechado)</span><br><strong style='font-size:20px;color:#1a1a18'>"
+            f"{cdi_suave.iloc[-1]:.1f}%</strong><br>"
+            f"<span style='font-size:11px;color:#888780'>{cdi_suave.index[-1].strftime('%b/%Y')}</span></div>",
+            unsafe_allow_html=True)
+        # Regime atual (último movimento detectado)
+        regime_atual_txt = "Estável"
+        cor_reg = "#888780"
+        if ciclos:
+            ultimo_ciclo = ciclos[-1]
+            # Se o último ciclo termina perto do fim da série, estamos nele
+            if (cdi_suave.index[-1] - ultimo_ciclo["fim"]).days < 120:
+                regime_atual_txt = ultimo_ciclo["tipo"]
+                cor_reg = "#E24B4A" if ultimo_ciclo["tipo"] == "Alta" else "#1D9E75"
+        cs4.markdown(
+            f"<div style='padding:8px 12px;border-radius:6px;background:{cor_reg}15;"
+            f"border-left:3px solid {cor_reg}'><span style='font-size:11px;color:#888780'>"
+            f"REGIME RECENTE</span><br><strong style='font-size:20px;color:{cor_reg}'>"
+            f"{regime_atual_txt}</strong></div>", unsafe_allow_html=True)
 
         # ── Pesos das carteiras ────────────────────────────────────────────────
         custom_w_cj = {cfg["name"]: st.session_state.get(f"rebal_{cfg['name']}",
