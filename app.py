@@ -2782,8 +2782,9 @@ with tab3:
                 f"{_m_pl2['ann_vol']*100:.2f}%",
                 f"{_m_pl2['sharpe']:.3f}",
                 f"{_m_pl2['sortino']:.3f}" if not pd.isna(_m_pl2['sortino']) else "—",
-                f"{_m_pl2['max_dd']*100:.2f}%",
                 f"{_m_pl2['calmar']:.3f}" if not pd.isna(_m_pl2['calmar']) else "—",
+                f"{_m_pl2['max_dd']*100:.2f}%",
+                f"{_m_pl2['var95']*100:.2f}%",
                 f"+{_acum_pl2:.1f}%",
             ]
 
@@ -2801,8 +2802,9 @@ with tab3:
                 f"{_m_mk2['ann_vol']*100:.2f}%",
                 f"{_m_mk2['sharpe']:.3f}",
                 f"{_m_mk2['sortino']:.3f}" if not pd.isna(_m_mk2['sortino']) else "—",
-                f"{_m_mk2['max_dd']*100:.2f}%",
                 f"{_m_mk2['calmar']:.3f}" if not pd.isna(_m_mk2['calmar']) else "—",
+                f"{_m_mk2['max_dd']*100:.2f}%",
+                f"{_m_mk2['var95']*100:.2f}%",
                 f"+{_acum_mk2:.1f}%",
             ]
 
