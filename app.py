@@ -6291,15 +6291,23 @@ with tab14:
     )
 
     # ── Detectar ciclos pela taxa CDI ─────────────────────────────────────────
-    # Remover o último mês se estiver incompleto (mês corrente ainda não fechou),
-    # o que causaria uma queda artificial na taxa anualizada.
+    # Remover o último mês se estiver incompleto (mês corrente ainda não fechou).
     cdi_para_ciclo = cdi_aligned.copy()
-    hoje = pd.Timestamp.today()
-    ultimo_mes = cdi_para_ciclo.index[-1] if len(cdi_para_ciclo) > 0 else None
-    if ultimo_mes is not None:
-        # Se o último ponto é do mês corrente (ainda não fechou), remover
-        if ultimo_mes.year == hoje.year and ultimo_mes.month == hoje.month:
+    hoje = pd.Timestamp.now()
+    if len(cdi_para_ciclo) > 0:
+        ultimo_mes = cdi_para_ciclo.index[-1]
+        # Remover se: (a) é o mês corrente, OU (b) é um mês futuro/incompleto.
+        # Comparação robusta por período year-month.
+        ultimo_periodo = pd.Period(ultimo_mes, freq="M")
+        periodo_hoje = pd.Period(hoje, freq="M")
+        if ultimo_periodo >= periodo_hoje:
             cdi_para_ciclo = cdi_para_ciclo.iloc[:-1]
+        # Segurança extra: se o último valor de CDI mensal for muito menor que
+        # a mediana recente (sinal de mês parcial), também remover
+        if len(cdi_para_ciclo) > 6:
+            _med_recente = cdi_para_ciclo.iloc[-7:-1].median()
+            if pd.notna(_med_recente) and cdi_para_ciclo.iloc[-1] < _med_recente * 0.6:
+                cdi_para_ciclo = cdi_para_ciclo.iloc[:-1]
 
     # Anualização correta da taxa CDI: o CDI mensal do BCB é a soma dos dias
     # ÚTEIS do mês (19 a 23), então anualizar por ^12 amplifica o ruído
