@@ -256,6 +256,105 @@ ASSET_CFG = [
 WEIGHTS = {a["name"]: a["w"] for a in ASSET_CFG}
 
 # ── Algoritmo HRP (López de Prado, 2016) ─────────────────────────────────────
+def compute_markowitz_frontier(returns_df, n_points=40, allow_short=False):
+    """Calcula a fronteira eficiente de Markowitz.
+    Retorna lista de portfólios ótimos (retorno, vol, pesos) ao longo da fronteira.
+    returns_df: DataFrame de retornos mensais dos ativos.
+    """
+    from scipy.optimize import minimize
+
+    mu = returns_df.mean().values * 12          # retorno anualizado
+    cov = returns_df.cov().values * 12          # covariância anualizada
+    n = len(mu)
+
+    def port_vol(w):
+        return np.sqrt(w @ cov @ w)
+    def port_ret(w):
+        return w @ mu
+
+    # Limites de peso
+    bounds = tuple((0, 1) if not allow_short else (-0.3, 1) for _ in range(n))
+    w0 = np.array([1/n] * n)
+    constr_sum = {"type": "eq", "fun": lambda w: np.sum(w) - 1}
+
+    # Range de retornos alvo (do mínimo ao máximo dos ativos)
+    ret_min, ret_max = mu.min(), mu.max()
+    target_rets = np.linspace(ret_min, ret_max, n_points)
+
+    frontier = []
+    for tr in target_rets:
+        constr = [constr_sum,
+                  {"type": "eq", "fun": lambda w, tr=tr: port_ret(w) - tr}]
+        try:
+            res = minimize(port_vol, w0, method="SLSQP",
+                           bounds=bounds, constraints=constr,
+                           options={"maxiter": 300, "ftol": 1e-9})
+            if res.success:
+                w = res.x
+                w = np.clip(w, 0, 1)
+                w = w / w.sum()  # renormalizar
+                frontier.append({
+                    "ret": float(port_ret(w)),
+                    "vol": float(port_vol(w)),
+                    "weights": w.copy(),
+                })
+        except Exception:
+            continue
+
+    return frontier
+
+def markowitz_min_vol(returns_df, allow_short=False):
+    """Portfólio de mínima variância global."""
+    from scipy.optimize import minimize
+    cov = returns_df.cov().values * 12
+    n = cov.shape[0]
+    def port_vol(w):
+        return np.sqrt(w @ cov @ w)
+    bounds = tuple((0, 1) if not allow_short else (-0.3, 1) for _ in range(n))
+    w0 = np.array([1/n] * n)
+    constr = {"type": "eq", "fun": lambda w: np.sum(w) - 1}
+    res = minimize(port_vol, w0, method="SLSQP", bounds=bounds, constraints=constr,
+                   options={"maxiter": 300})
+    w = np.clip(res.x, 0, 1)
+    return w / w.sum()
+
+def markowitz_max_sharpe(returns_df, rf_annual=0.0, allow_short=False):
+    """Portfólio de máximo Sharpe (tangente)."""
+    from scipy.optimize import minimize
+    mu = returns_df.mean().values * 12
+    cov = returns_df.cov().values * 12
+    n = len(mu)
+    def neg_sharpe(w):
+        r = w @ mu
+        v = np.sqrt(w @ cov @ w)
+        return -(r - rf_annual) / v if v > 0 else 0
+    bounds = tuple((0, 1) if not allow_short else (-0.3, 1) for _ in range(n))
+    w0 = np.array([1/n] * n)
+    constr = {"type": "eq", "fun": lambda w: np.sum(w) - 1}
+    res = minimize(neg_sharpe, w0, method="SLSQP", bounds=bounds, constraints=constr,
+                   options={"maxiter": 300})
+    w = np.clip(res.x, 0, 1)
+    return w / w.sum()
+
+def markowitz_target_vol(returns_df, target_vol_annual, allow_short=False):
+    """Portfólio de máximo retorno para uma volatilidade alvo."""
+    from scipy.optimize import minimize
+    mu = returns_df.mean().values * 12
+    cov = returns_df.cov().values * 12
+    n = len(mu)
+    def neg_ret(w):
+        return -(w @ mu)
+    def vol_constr(w):
+        return target_vol_annual - np.sqrt(w @ cov @ w)  # vol <= alvo
+    bounds = tuple((0, 1) if not allow_short else (-0.3, 1) for _ in range(n))
+    w0 = np.array([1/n] * n)
+    constr = [{"type": "eq", "fun": lambda w: np.sum(w) - 1},
+              {"type": "ineq", "fun": vol_constr}]
+    res = minimize(neg_ret, w0, method="SLSQP", bounds=bounds, constraints=constr,
+                   options={"maxiter": 300})
+    w = np.clip(res.x, 0, 1)
+    return w / w.sum()
+
 def compute_hrp(returns_df):
     """Calcula pesos HRP dado um DataFrame de retornos mensais.
     Etapas: correlação → distância → clusterização → quasi-diag → alocação recursiva.
@@ -2004,7 +2103,7 @@ def gerar_pdf_cliente(dados):
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
 (tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9,
- tab10, tab11, tab12, tab13, tab14) = st.tabs([
+ tab10, tab11, tab12, tab13, tab14, tab15) = st.tabs([
     "📖 Guia",
     "📈 Retorno acumulado",
     "📉 Drawdown",
@@ -2020,6 +2119,7 @@ def gerar_pdf_cliente(dados):
     "📊 Atribuição de retorno",
     "🧪 Portfólio livre",
     "📉📈 Ciclos de juros",
+    "🎯 Markowitz",
 ])
 
 # ── Tab 0: Guia ──────────────────────────────────────────────────────────────
@@ -2342,6 +2442,16 @@ with tab1:
                 name="🧪 Portfólio livre",
                 line=dict(color="#9B59B6", width=2.5)))
 
+    # ── Markowitz (se aplicado na aba Markowitz) ──
+    if st.session_state.get("mk_port_ret") is not None:
+        mk_ret = st.session_state["mk_port_ret"]
+        mk_cum = (1 + mk_ret).cumprod() * 100
+        mk_f = rebase(mk_cum, idx_filtrado)
+        if mk_f is not None and len(mk_f) > 0:
+            fig.add_trace(go.Scatter(x=mk_f.index, y=mk_f.values.round(2),
+                name="🎯 Markowitz",
+                line=dict(color="#7F77DD", width=2.5, dash="dot")))
+
     # ── Marcações de eventos de cauda ──
     # Filtrar apenas eventos dentro do período selecionado
     data_ini = idx_filtrado[0]  if len(idx_filtrado) > 0 else port_cum.index[0]
@@ -2536,6 +2646,19 @@ with tab2:
             line=dict(color="#9B59B6", width=1.8),
             fillcolor="rgba(155,89,182,0.10)",
             hovertemplate="%{x|%b/%Y}<br>DD: %{y:.2f}%<extra>Portfólio livre</extra>"))
+
+    # ── Markowitz no drawdown ──
+    if st.session_state.get("mk_port_ret") is not None:
+        mk_ret = st.session_state["mk_port_ret"]
+        mk_cum_dd = (1 + mk_ret).cumprod()
+        mk_dd = (mk_cum_dd - mk_cum_dd.cummax()) / mk_cum_dd.cummax() * 100
+        mk_dd_f = mk_dd.reindex(dd_port_f.index).ffill() if len(dd_port_f) > 0 else mk_dd
+        fig_dd.add_trace(go.Scatter(
+            x=mk_dd_f.index, y=mk_dd_f.values.round(2),
+            name="🎯 Markowitz", fill="tozeroy",
+            line=dict(color="#7F77DD", width=1.8, dash="dot"),
+            fillcolor="rgba(127,119,221,0.10)",
+            hovertemplate="%{x|%b/%Y}<br>DD: %{y:.2f}%<extra>Markowitz</extra>"))
 
     fig_dd.update_layout(
         plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
@@ -6760,8 +6883,9 @@ with tab14:
         st.markdown("<div class='section-title'>sensibilidade a juros — duration efetiva</div>",
                     unsafe_allow_html=True)
         st.markdown(
-            "Quanto cada ativo se move, em média, para cada **1 ponto percentual** de variação "
-            "no CDI. Valores negativos = o ativo sobe quando o juro cai (típico de prefixados longos)."
+            "Quanto cada ativo se valoriza, em média, para cada **corte de 1 ponto percentual** "
+            "na Selic. Valores positivos = o ativo ganha quando o juro cai (típico de prefixados "
+            "e NTN-B longas). Próximo de zero = imune a juros (pós-fixados)."
         )
 
         # Variação mensal do CDI (em p.p.) vs retorno de cada ativo
@@ -6777,36 +6901,43 @@ with tab14:
             if len(idx_c) < 12:
                 continue
             x2, y2 = x.reindex(idx_c), y.reindex(idx_c)
-            # Regressão linear simples: beta = cov(x,y)/var(x)
+            # Regressão linear: beta = cov(x,y)/var(x)
+            # Invertemos o sinal para expressar "retorno por CORTE de 1 p.p."
+            # (mais intuitivo: valor positivo = ganha quando juro cai)
             if x2.var() > 0:
-                beta = np.cov(x2, y2)[0, 1] / x2.var()
+                beta = -(np.cov(x2, y2)[0, 1] / x2.var())
                 sens_data.append((cfg["name"], beta, cfg["color"]))
 
         if sens_data:
+            # Ordenar do maior beneficiado pelo corte (topo) ao menor
             sens_data.sort(key=lambda x: x[1])
+            # Cor: verde para quem ganha com corte, cinza para neutro/negativo
+            cores_barra = ["#1D9E75" if s[1] > 0.3 else "#888780" if s[1] > -0.3 else "#E24B4A"
+                           for s in sens_data]
             fig_sens = go.Figure(go.Bar(
                 x=[s[1] for s in sens_data],
                 y=[s[0] for s in sens_data],
                 orientation="h",
-                marker_color=[s[2] for s in sens_data],
+                marker_color=cores_barra,
                 text=[f"{s[1]:+.2f}" for s in sens_data],
                 textposition="outside",
-                hovertemplate="%{y}<br>Sensibilidade: %{x:+.2f}%% por +1 p.p. CDI<extra></extra>",
+                hovertemplate="%{y}<br>+%{x:.2f}%% a cada corte de 1 p.p. na Selic<extra></extra>",
             ))
             fig_sens.update_layout(
                 plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
                 height=340, font=dict(color="#1a1a18"),
                 margin=dict(l=0, r=40, t=8, b=0),
-                xaxis=dict(title="Retorno (%) por +1 p.p. de CDI",
+                xaxis=dict(title="Retorno (%) por corte de 1 p.p. na Selic",
                            gridcolor="#e8e6e0", zerolinecolor="#888780",
                            tickfont=dict(color="#444441"), color="#1a1a18"),
                 yaxis=dict(tickfont=dict(color="#444441", size=11), color="#1a1a18"),
             )
             st.plotly_chart(fig_sens, use_container_width=True)
-            mais_sens = min(sens_data, key=lambda x: x[1])
+            mais_sens = max(sens_data, key=lambda x: x[1])
             st.caption(
-                f"**{mais_sens[0]}** é o mais sensível a juros — cai mais quando a Selic sobe "
-                f"e sobe mais quando ela cai. Ativos pós-fixados (IDA-DI) ficam próximos de zero."
+                f"**{mais_sens[0]}** é o mais beneficiado por cortes de juros — ganha cerca de "
+                f"**{mais_sens[1]:+.2f}%** a cada corte de 1 p.p. na Selic. Ideal para reforçar "
+                f"no início de ciclos de queda. Pós-fixados (IDA-DI) ficam próximos de zero."
             )
 
         # ── 2. TEMPO DE RECUPERAÇÃO PÓS-INÍCIO DE CICLO DE ALTA ────────────────
@@ -6915,6 +7046,263 @@ with tab14:
             "Ciclos detectados pela variação do CDI (média móvel 3m, limiar 0.15 p.p., "
             "mínimo 3 meses). Configure pesos na aba Rebalanceamento para incluir o Customizado."
         )
+
+
+# ── Tab 15: Markowitz ─────────────────────────────────────────────────────────
+with tab15:
+    st.markdown(
+        "**Otimização de Markowitz** — a fronteira eficiente mostra, para cada nível "
+        "de risco, o portfólio de **máximo retorno** possível. Compare com HRP+BL e "
+        "Customizado para ver qual abordagem entrega melhor relação risco-retorno."
+    )
+
+    # ── Montar matriz de retornos dos ativos ──────────────────────────────────
+    ret_dict_mk = {}
+    for cfg in ASSET_CFG:
+        r = (series[cfg["name"]]["valor"].pct_change().dropna()
+             .reindex(common_idx).ffill().fillna(0))
+        ret_dict_mk[cfg["name"]] = r
+    ret_df_mk = pd.DataFrame(ret_dict_mk).dropna()
+
+    if len(ret_df_mk) < 24:
+        st.warning("Histórico insuficiente para otimização de Markowitz (mínimo 24 meses).")
+    else:
+        # ── Calcular fronteira eficiente ──────────────────────────────────────
+        with st.spinner("Calculando fronteira eficiente..."):
+            frontier = compute_markowitz_frontier(ret_df_mk, n_points=40)
+            w_minvol = markowitz_min_vol(ret_df_mk)
+            w_maxsharpe = markowitz_max_sharpe(ret_df_mk, rf_annual=rf_ann)
+
+        if not frontier:
+            st.error("Não foi possível calcular a fronteira eficiente.")
+        else:
+            mu_mk = ret_df_mk.mean().values * 12
+            cov_mk = ret_df_mk.cov().values * 12
+
+            def stats_w(w):
+                r = float(w @ mu_mk)
+                v = float(np.sqrt(w @ cov_mk @ w))
+                s = (r - rf_ann) / v if v > 0 else 0
+                return r, v, s
+
+            r_mv, v_mv, s_mv = stats_w(w_minvol)
+            r_ms, v_ms, s_ms = stats_w(w_maxsharpe)
+
+            # Pesos HRP+BL e Customizado para plotar como pontos
+            w_hrp_arr = np.array([WEIGHTS_ATIVO.get(c["name"], c["w"]) for c in ASSET_CFG])
+            w_hrp_arr = w_hrp_arr / w_hrp_arr.sum()
+            r_hrp, v_hrp, s_hrp = stats_w(w_hrp_arr)
+
+            custom_w_mk = {c["name"]: st.session_state.get(f"rebal_{c['name']}",
+                           c["w"]*100)/100 for c in ASSET_CFG}
+            tem_custom_mk = abs(sum(custom_w_mk.values()) - 1.0) < 0.02
+            if tem_custom_mk:
+                w_cust_arr = np.array([custom_w_mk[c["name"]] for c in ASSET_CFG])
+                r_cust, v_cust, s_cust = stats_w(w_cust_arr)
+
+            # ── Seletor de ponto da fronteira ─────────────────────────────────
+            st.markdown("#### 1. Escolha o portfólio Markowitz")
+            col_sel1, col_sel2 = st.columns([1, 1])
+            with col_sel1:
+                modo_mk = st.radio(
+                    "Modo de seleção",
+                    ["Máximo Sharpe", "Mínima volatilidade", "Volatilidade alvo", "Ponto da fronteira"],
+                    key="mk_modo"
+                )
+            with col_sel2:
+                if modo_mk == "Volatilidade alvo":
+                    vol_alvo = st.number_input(
+                        "Volatilidade alvo (% a.a.)",
+                        min_value=round(v_mv*100, 1),
+                        max_value=round(frontier[-1]["vol"]*100, 1),
+                        value=round(v_mv*100 + 2, 1), step=0.5,
+                        key="mk_vol_alvo"
+                    )
+                elif modo_mk == "Ponto da fronteira":
+                    ponto_idx = st.slider(
+                        "Ponto na fronteira (0=conservador, 100=agressivo)",
+                        0, len(frontier)-1, len(frontier)//3,
+                        key="mk_ponto"
+                    )
+
+            # Determinar pesos escolhidos
+            if modo_mk == "Máximo Sharpe":
+                w_escolhido = w_maxsharpe
+            elif modo_mk == "Mínima volatilidade":
+                w_escolhido = w_minvol
+            elif modo_mk == "Volatilidade alvo":
+                w_escolhido = markowitz_target_vol(ret_df_mk, vol_alvo/100)
+            else:
+                w_escolhido = frontier[ponto_idx]["weights"]
+
+            r_esc, v_esc, s_esc = stats_w(w_escolhido)
+
+            # ── KPIs da carteira Markowitz escolhida ──────────────────────────
+            st.markdown("#### 2. Indicadores da carteira Markowitz")
+            mk1, mk2, mk3, mk4 = st.columns(4)
+            mk1.markdown(kpi("Retorno a.a.", f"{r_esc*100:.2f}%",
+                f"HRP+BL {r_hrp*100:.1f}%",
+                "pos" if r_esc >= r_hrp else "warn"), unsafe_allow_html=True)
+            mk2.markdown(kpi("Volatilidade a.a.", f"{v_esc*100:.2f}%",
+                f"HRP+BL {v_hrp*100:.1f}%",
+                "good" if v_esc <= v_hrp else "warn"), unsafe_allow_html=True)
+            mk3.markdown(kpi("Sharpe (rf=CDI)", f"{s_esc:.3f}",
+                f"HRP+BL {s_hrp:.3f}",
+                "pos" if s_esc >= s_hrp else "warn"), unsafe_allow_html=True)
+            mk4.markdown(kpi("Retorno/Risco", f"{r_esc/v_esc:.2f}" if v_esc > 0 else "—",
+                "eficiência bruta"), unsafe_allow_html=True)
+
+            # ── GRÁFICO: Fronteira eficiente ──────────────────────────────────
+            st.markdown("#### 3. Fronteira eficiente — risco × retorno")
+            fig_mk = go.Figure()
+
+            # Fronteira
+            fig_mk.add_trace(go.Scatter(
+                x=[f["vol"]*100 for f in frontier],
+                y=[f["ret"]*100 for f in frontier],
+                mode="lines", name="Fronteira eficiente",
+                line=dict(color="#378ADD", width=2.5),
+                hovertemplate="Vol: %{x:.1f}%%<br>Ret: %{y:.1f}%%<extra></extra>"))
+
+            # Ativos individuais como pontos
+            for i, cfg in enumerate(ASSET_CFG):
+                vol_a = np.sqrt(cov_mk[i, i])
+                ret_a = mu_mk[i]
+                fig_mk.add_trace(go.Scatter(
+                    x=[vol_a*100], y=[ret_a*100], mode="markers+text",
+                    name=cfg["name"], text=[cfg["name"]], textposition="top center",
+                    textfont=dict(size=8, color="#888780"),
+                    marker=dict(size=8, color=cfg["color"]),
+                    showlegend=False,
+                    hovertemplate=f"{cfg['name']}<br>Vol: %{{x:.1f}}%%<br>Ret: %{{y:.1f}}%%<extra></extra>"))
+
+            # Pontos especiais: Max Sharpe, Min Vol, HRP, Custom, Escolhido
+            fig_mk.add_trace(go.Scatter(
+                x=[v_ms*100], y=[r_ms*100], mode="markers", name="Máx Sharpe",
+                marker=dict(size=16, color="#1D9E75", symbol="star"),
+                hovertemplate="Máx Sharpe<br>Vol: %{x:.1f}%%<br>Ret: %{y:.1f}%%<extra></extra>"))
+            fig_mk.add_trace(go.Scatter(
+                x=[v_mv*100], y=[r_mv*100], mode="markers", name="Mín Vol",
+                marker=dict(size=14, color="#0F6E56", symbol="diamond"),
+                hovertemplate="Mín Vol<br>Vol: %{x:.1f}%%<br>Ret: %{y:.1f}%%<extra></extra>"))
+            fig_mk.add_trace(go.Scatter(
+                x=[v_hrp*100], y=[r_hrp*100], mode="markers", name="HRP+BL",
+                marker=dict(size=16, color="#E24B4A", symbol="circle",
+                            line=dict(width=2, color="#fff")),
+                hovertemplate="HRP+BL<br>Vol: %{x:.1f}%%<br>Ret: %{y:.1f}%%<extra></extra>"))
+            if tem_custom_mk:
+                fig_mk.add_trace(go.Scatter(
+                    x=[v_cust*100], y=[r_cust*100], mode="markers", name="Customizado",
+                    marker=dict(size=16, color="#C4770A", symbol="square",
+                                line=dict(width=2, color="#fff")),
+                    hovertemplate="Customizado<br>Vol: %{x:.1f}%%<br>Ret: %{y:.1f}%%<extra></extra>"))
+            # Ponto escolhido (destaque)
+            fig_mk.add_trace(go.Scatter(
+                x=[v_esc*100], y=[r_esc*100], mode="markers", name="⭐ Escolhido",
+                marker=dict(size=20, color="#7F77DD", symbol="x",
+                            line=dict(width=2, color="#fff")),
+                hovertemplate="Escolhido<br>Vol: %{x:.1f}%%<br>Ret: %{y:.1f}%%<extra></extra>"))
+
+            fig_mk.update_layout(
+                plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                height=460, font=dict(color="#1a1a18"),
+                margin=dict(l=0, r=0, t=8, b=0),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="left", x=0, font=dict(color="#1a1a18", size=10)),
+                xaxis=dict(title="Volatilidade anual (%)", gridcolor="#e8e6e0",
+                           tickfont=dict(color="#444441"), color="#1a1a18"),
+                yaxis=dict(title="Retorno anual (%)", gridcolor="#e8e6e0",
+                           tickfont=dict(color="#444441"), color="#1a1a18"),
+            )
+            st.plotly_chart(fig_mk, use_container_width=True)
+
+            # ── Composição da carteira escolhida ──────────────────────────────
+            st.markdown("#### 4. Composição da carteira Markowitz escolhida")
+            comp_rows = []
+            for i, cfg in enumerate(ASSET_CFG):
+                peso = w_escolhido[i] * 100
+                if peso >= 0.1:
+                    comp_rows.append({
+                        "Ativo": cfg["name"],
+                        "Cluster": cfg["cluster"],
+                        "Peso Markowitz": f"{peso:.1f}%",
+                        "Peso HRP+BL": f"{w_hrp_arr[i]*100:.1f}%",
+                        "Δ vs HRP": f"{(peso - w_hrp_arr[i]*100):+.1f}%",
+                    })
+            df_comp_mk = pd.DataFrame(comp_rows).set_index("Ativo")
+            st.dataframe(df_comp_mk, use_container_width=True)
+
+            # Gráfico de barras da composição
+            fig_comp_mk = go.Figure()
+            nomes_c = [c["name"] for c in ASSET_CFG]
+            fig_comp_mk.add_trace(go.Bar(
+                x=nomes_c, y=[w_escolhido[i]*100 for i in range(len(ASSET_CFG))],
+                name="Markowitz", marker_color="#7F77DD"))
+            fig_comp_mk.add_trace(go.Bar(
+                x=nomes_c, y=[w_hrp_arr[i]*100 for i in range(len(ASSET_CFG))],
+                name="HRP+BL", marker_color="rgba(226,75,74,0.6)"))
+            fig_comp_mk.update_layout(
+                plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                height=280, barmode="group", font=dict(color="#1a1a18"),
+                margin=dict(l=0, r=0, t=8, b=0),
+                legend=dict(orientation="h", y=1.05, x=0, font=dict(color="#1a1a18")),
+                xaxis=dict(tickfont=dict(color="#444441", size=10), color="#1a1a18"),
+                yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                           tickfont=dict(color="#444441"), color="#1a1a18"),
+            )
+            st.plotly_chart(fig_comp_mk, use_container_width=True)
+
+            # ── Botão para aplicar e comparação final ─────────────────────────
+            if st.button("💾 Usar esta carteira Markowitz nas outras abas",
+                         key="mk_aplicar", type="primary"):
+                pesos_mk_dict = {cfg["name"]: float(w_escolhido[i])
+                                 for i, cfg in enumerate(ASSET_CFG)}
+                port_ret_mk = sum(pesos_mk_dict[a["name"]] * ret_dict_mk[a["name"]]
+                                  for a in ASSET_CFG)
+                st.session_state["mk_port_ret"] = port_ret_mk
+                st.session_state["mk_composicao"] = [
+                    f"{c['name']} {w_escolhido[i]*100:.0f}%"
+                    for i, c in enumerate(ASSET_CFG) if w_escolhido[i] >= 0.001
+                ]
+                st.success("✅ Carteira Markowitz salva! Aparece agora como linha roxa "
+                           "nos gráficos de Retorno acumulado e Drawdown.")
+                st.balloons()
+
+            if st.session_state.get("mk_port_ret") is not None:
+                if st.button("🗑️ Remover Markowitz das outras abas", key="mk_remover"):
+                    st.session_state["mk_port_ret"] = None
+                    st.session_state.pop("mk_composicao", None)
+                    st.rerun()
+
+            # ── Comparação final: HRP vs Custom vs Markowitz ──────────────────
+            st.divider()
+            st.markdown("#### 5. Confronto — HRP+BL vs Customizado vs Markowitz")
+            comp_final = [
+                {"Modelo": "🔷 HRP+BL", "Retorno a.a.": f"{r_hrp*100:.2f}%",
+                 "Vol a.a.": f"{v_hrp*100:.2f}%", "Sharpe": f"{s_hrp:.3f}"},
+                {"Modelo": "🟣 Markowitz (escolhido)", "Retorno a.a.": f"{r_esc*100:.2f}%",
+                 "Vol a.a.": f"{v_esc*100:.2f}%", "Sharpe": f"{s_esc:.3f}"},
+            ]
+            if tem_custom_mk:
+                comp_final.insert(1, {"Modelo": "🔶 Customizado",
+                    "Retorno a.a.": f"{r_cust*100:.2f}%",
+                    "Vol a.a.": f"{v_cust*100:.2f}%", "Sharpe": f"{s_cust:.3f}"})
+            st.dataframe(pd.DataFrame(comp_final).set_index("Modelo"),
+                         use_container_width=True)
+
+            # Insight
+            melhor_sharpe = max([("HRP+BL", s_hrp), ("Markowitz", s_esc)] +
+                                ([("Customizado", s_cust)] if tem_custom_mk else []),
+                                key=lambda x: x[1])
+            st.info(f"📊 Pelo **Sharpe** (retorno ajustado ao risco), o modelo **{melhor_sharpe[0]}** "
+                    f"lidera com {melhor_sharpe[1]:.3f}. Lembre-se: Markowitz otimiza in-sample "
+                    f"(pode sofrer overfitting), enquanto o HRP é mais robusto out-of-sample.")
+
+            st.caption(
+                "Markowitz maximiza retorno para cada nível de risco usando retornos e "
+                "covariâncias históricas anualizadas. Sensível a erros de estimação — "
+                "por isso o HRP costuma ser mais estável na prática."
+            )
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
