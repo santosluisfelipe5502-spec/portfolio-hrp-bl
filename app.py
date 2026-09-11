@@ -2267,6 +2267,30 @@ para trás) e a "robustez prática" do HRP (que se comporta melhor no futuro rea
 Use a aba **🎯 Markowitz** para confrontar os três modelos: HRP+BL, Customizado e Markowitz.
         """)
 
+        st.markdown("""
+---
+**🎓 Uma analogia para entender a diferença:**
+
+Imagine dois alunos se preparando para uma prova:
+
+- **O aluno "Markowitz"** decora exatamente as respostas das provas antigas.
+Nas provas que já caíram, ele tira 10 — parece o melhor aluno da turma.
+Mas quando cai uma prova nova, com questões diferentes, ele se perde: decorou
+o passado em vez de aprender o conteúdo.
+
+- **O aluno "HRP"** não decora respostas — aprende os conceitos e a estruturar
+o raciocínio. Nas provas antigas talvez tire 8, não 10. Mas em **qualquer**
+prova nova ele mantém a nota — porque aprendeu de verdade.
+
+Investir é sempre uma "prova nova": o futuro nunca é igual ao passado. O
+Markowitz brilha olhando para trás (*in-sample*), mas tropeça no que importa —
+o futuro real (*out-of-sample*). O HRP abre mão de parecer perfeito no
+retrovisor em troca de ser **consistente** na estrada à frente.
+
+*Use o teste out-of-sample na aba Markowitz para ver essa diferença com os
+seus próprios dados.*
+        """)
+
     # ── Seção 2: Os Ativos ────────────────────────────────────────────────────
     with st.expander("📦 Os ativos da carteira", expanded=False):
         ativos_info = [
@@ -7419,6 +7443,158 @@ with tab15:
                 "covariâncias históricas anualizadas. Sensível a erros de estimação — "
                 "por isso o HRP costuma ser mais estável na prática."
             )
+
+            # ══════════════════════════════════════════════════════════════════
+            # ── TESTE OUT-OF-SAMPLE (a prova real) ─────────────────────────────
+            # ══════════════════════════════════════════════════════════════════
+            st.divider()
+            st.markdown("<div class='section-title'>🔬 teste out-of-sample — a prova real</div>",
+                        unsafe_allow_html=True)
+            st.markdown(
+                "O confronto acima é **in-sample**: cada modelo é avaliado nos mesmos dados "
+                "que usou para se calibrar (o Markowitz leva vantagem injusta, como um aluno "
+                "que faz a prova com o gabarito). O teste **out-of-sample** é honesto: "
+                "otimiza os modelos numa janela inicial e mede o desempenho no período "
+                "seguinte — dados que os modelos **nunca viram**."
+            )
+
+            col_oos1, col_oos2 = st.columns([1, 2])
+            with col_oos1:
+                pct_treino = st.slider(
+                    "% do histórico para treino (in-sample)",
+                    50, 80, 60, 5,
+                    key="oos_pct",
+                    help="O restante é usado para o teste out-of-sample (às cegas)."
+                )
+
+            if st.button("▶ Rodar teste out-of-sample", key="btn_oos", type="primary"):
+                with st.spinner("Otimizando na janela de treino e testando às cegas..."):
+                    try:
+                        n_total = len(ret_df_mk)
+                        n_treino = int(n_total * pct_treino / 100)
+                        ret_treino = ret_df_mk.iloc[:n_treino]
+                        ret_teste  = ret_df_mk.iloc[n_treino:]
+
+                        data_corte = ret_df_mk.index[n_treino]
+                        st.markdown(
+                            f"**Treino:** {ret_df_mk.index[0].strftime('%b/%Y')} → "
+                            f"{ret_df_mk.index[n_treino-1].strftime('%b/%Y')} "
+                            f"({n_treino} meses) · "
+                            f"**Teste (às cegas):** {data_corte.strftime('%b/%Y')} → "
+                            f"{ret_df_mk.index[-1].strftime('%b/%Y')} "
+                            f"({len(ret_teste)} meses)"
+                        )
+
+                        if len(ret_teste) < 12:
+                            st.warning("Janela de teste muito curta. Reduza o % de treino.")
+                        else:
+                            # ── Otimizar CADA modelo APENAS com dados de treino ──
+                            # Markowitz Máx Sharpe treinado
+                            w_mk_treino = markowitz_max_sharpe(ret_treino, rf_annual=rf_ann)
+                            # HRP treinado
+                            w_hrp_treino_s = compute_hrp(ret_treino)
+                            w_hrp_treino = np.array([float(w_hrp_treino_s.get(c["name"], 0))
+                                                     for c in ASSET_CFG])
+                            w_hrp_treino = w_hrp_treino / w_hrp_treino.sum()
+                            # Customizado (pesos fixos do usuário, não são "treinados")
+                            if tem_custom_mk:
+                                w_cust_fix = np.array([custom_w_mk[c["name"]] for c in ASSET_CFG])
+
+                            # ── Aplicar os pesos treinados no período de TESTE ──
+                            def performance_oos(pesos, ret_teste_df):
+                                r = (ret_teste_df.values @ pesos)
+                                r = pd.Series(r, index=ret_teste_df.index)
+                                cum = (1 + r).cumprod()
+                                acum = (cum.iloc[-1] - 1) * 100
+                                vol = r.std() * np.sqrt(12) * 100
+                                ann = ((cum.iloc[-1]) ** (12/len(r)) - 1) * 100
+                                dd = ((cum - cum.cummax()) / cum.cummax()).min() * 100
+                                cdi_teste = cdi_aligned.reindex(ret_teste_df.index).fillna(0)
+                                rf_t = (1 + cdi_teste.mean())**12 - 1
+                                sharpe = (ann/100 - rf_t) / (vol/100) if vol > 0 else 0
+                                return {"acum": acum, "ann": ann, "vol": vol,
+                                        "dd": dd, "sharpe": sharpe, "cum": cum}
+
+                            perf_mk = performance_oos(w_mk_treino, ret_teste)
+                            perf_hrp = performance_oos(w_hrp_treino, ret_teste)
+                            perf_cust = performance_oos(w_cust_fix, ret_teste) if tem_custom_mk else None
+
+                            # ── Gráfico: evolução no período de teste ──
+                            fig_oos = go.Figure()
+                            fig_oos.add_trace(go.Scatter(
+                                x=perf_hrp["cum"].index, y=(perf_hrp["cum"].values*100).round(1),
+                                name="HRP+BL", line=dict(color="#378ADD", width=2.5)))
+                            fig_oos.add_trace(go.Scatter(
+                                x=perf_mk["cum"].index, y=(perf_mk["cum"].values*100).round(1),
+                                name="Markowitz", line=dict(color="#7F77DD", width=2.5, dash="dot")))
+                            if perf_cust:
+                                fig_oos.add_trace(go.Scatter(
+                                    x=perf_cust["cum"].index, y=(perf_cust["cum"].values*100).round(1),
+                                    name="Customizado", line=dict(color="#C4770A", width=2, dash="dash")))
+                            fig_oos.update_layout(
+                                plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                                height=340, font=dict(color="#1a1a18"),
+                                margin=dict(l=0, r=0, t=8, b=0),
+                                legend=dict(orientation="h", y=1.05, x=0, font=dict(color="#1a1a18")),
+                                xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441"), color="#1a1a18"),
+                                yaxis=dict(title="Base 100", gridcolor="#e8e6e0",
+                                           tickfont=dict(color="#444441"), color="#1a1a18"),
+                            )
+                            st.plotly_chart(fig_oos, use_container_width=True)
+
+                            # ── Tabela comparativa out-of-sample ──
+                            linhas_oos = [
+                                {"Modelo": "🔷 HRP+BL",
+                                 "Retorno a.a.": f"{perf_hrp['ann']:.2f}%",
+                                 "Acumulado": f"{perf_hrp['acum']:+.1f}%",
+                                 "Vol a.a.": f"{perf_hrp['vol']:.2f}%",
+                                 "Max DD": f"{perf_hrp['dd']:.1f}%",
+                                 "Sharpe": f"{perf_hrp['sharpe']:.3f}"},
+                                {"Modelo": "🟣 Markowitz",
+                                 "Retorno a.a.": f"{perf_mk['ann']:.2f}%",
+                                 "Acumulado": f"{perf_mk['acum']:+.1f}%",
+                                 "Vol a.a.": f"{perf_mk['vol']:.2f}%",
+                                 "Max DD": f"{perf_mk['dd']:.1f}%",
+                                 "Sharpe": f"{perf_mk['sharpe']:.3f}"},
+                            ]
+                            if perf_cust:
+                                linhas_oos.insert(1, {"Modelo": "🔶 Customizado",
+                                     "Retorno a.a.": f"{perf_cust['ann']:.2f}%",
+                                     "Acumulado": f"{perf_cust['acum']:+.1f}%",
+                                     "Vol a.a.": f"{perf_cust['vol']:.2f}%",
+                                     "Max DD": f"{perf_cust['dd']:.1f}%",
+                                     "Sharpe": f"{perf_cust['sharpe']:.3f}"})
+                            st.dataframe(pd.DataFrame(linhas_oos).set_index("Modelo"),
+                                         use_container_width=True)
+
+                            # ── Veredito automático ──
+                            if perf_hrp["sharpe"] > perf_mk["sharpe"]:
+                                st.success(
+                                    f"✅ **O HRP+BL venceu out-of-sample!** No período que nenhum "
+                                    f"modelo tinha visto, o HRP entregou Sharpe de "
+                                    f"**{perf_hrp['sharpe']:.3f}** vs **{perf_mk['sharpe']:.3f}** "
+                                    f"do Markowitz. Isso confirma na prática: a otimização "
+                                    f"'perfeita' do Markowitz no passado **não se sustenta** no "
+                                    f"futuro real. O HRP é mais robusto — exatamente o que se "
+                                    f"espera de um modelo que não depende de prever retornos."
+                                )
+                            elif perf_mk["sharpe"] > perf_hrp["sharpe"]:
+                                st.info(
+                                    f"📊 Neste recorte, o Markowitz manteve Sharpe superior "
+                                    f"out-of-sample (**{perf_mk['sharpe']:.3f}** vs "
+                                    f"**{perf_hrp['sharpe']:.3f}**). Isso pode acontecer em "
+                                    f"períodos onde os padrões do treino persistiram. Teste "
+                                    f"outras janelas (%) — o HRP costuma vencer na maioria delas, "
+                                    f"e sua vantagem é a **consistência** entre diferentes recortes."
+                                )
+                            st.caption(
+                                "Teste out-of-sample: os pesos foram definidos SÓ com dados de "
+                                "treino e aplicados sem alteração no período de teste. É o teste "
+                                "mais honesto de robustez — simula o que aconteceria investindo "
+                                "de verdade, sem conhecer o futuro."
+                            )
+                    except Exception as e:
+                        st.error(f"Erro no teste out-of-sample: {e}")
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
