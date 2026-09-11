@@ -1574,6 +1574,50 @@ if st.session_state.get("pl_port_ret") is not None:
         pl7.markdown(kpi("Calmar Ratio", f"{_m_pl['calmar']:.3f}" if not pd.isna(_m_pl['calmar']) else "—",
             f"HRP+BL {m_port['calmar']:.3f}"), unsafe_allow_html=True)
 
+# ── KPIs do Markowitz (se aplicado) ───────────────────────────────────────────
+if st.session_state.get("mk_port_ret") is not None:
+    _mk_ret = st.session_state["mk_port_ret"]
+    _mk_idx = _mk_ret.index.intersection(cdi_aligned.index)
+    if len(_mk_idx) > 12:
+        _mk_r   = _mk_ret.reindex(_mk_idx).fillna(0)
+        _mk_cdi = cdi_aligned.reindex(_mk_idx).fillna(0)
+        _m_mk   = metrics(_mk_r, _mk_cdi)
+        _mk_comp = " · ".join(st.session_state.get("mk_composicao", [])[:6])
+
+        st.markdown(
+            "<div style='font-size:11px;font-weight:500;letter-spacing:.06em;"
+            "text-transform:uppercase;color:#7F77DD;margin:8px 0 6px'>"
+            "🎯 Markowitz — otimizado na aba Markowitz</div>",
+            unsafe_allow_html=True
+        )
+        if _mk_comp:
+            st.markdown(
+                f"<div style='font-size:11px;color:#888780;margin-bottom:6px'>{_mk_comp}</div>",
+                unsafe_allow_html=True
+            )
+
+        mk1, mk2, mk3, mk4, mk5, mk6, mk7 = st.columns(7)
+        _acum_mk = (_m_mk["cum"].iloc[-1]-1)*100
+        _premio_cdi_mk = (_m_mk["ann_ret"] - rf_ann)*100
+        mk1.markdown(kpi("Acumulado", f"+{_acum_mk:.1f}%",
+            f"CDI + {_premio_cdi_mk:.2f}% a.a.",
+            "pos" if _acum_mk >= acum_port else "warn"), unsafe_allow_html=True)
+        mk2.markdown(kpi("Retorno a.a.", f"{_m_mk['ann_ret']*100:.2f}%",
+            f"HRP+BL {(_m_mk['ann_ret']-m_port['ann_ret'])*100:+.1f}%"), unsafe_allow_html=True)
+        _cls_vol_mk = "good" if _m_mk["ann_vol"] <= m_port["ann_vol"] else "warn"
+        mk3.markdown(kpi("Volatilidade a.a.", f"{_m_mk['ann_vol']*100:.2f}%",
+            f"HRP+BL {m_port['ann_vol']*100:.1f}%", _cls_vol_mk), unsafe_allow_html=True)
+        _cls_sh_mk = "pos" if _m_mk["sharpe"] >= m_port["sharpe"] else "warn"
+        mk4.markdown(kpi("Sharpe (rf=CDI)", f"{_m_mk['sharpe']:.3f}",
+            f"HRP+BL {m_port['sharpe']:.3f}", _cls_sh_mk), unsafe_allow_html=True)
+        mk5.markdown(kpi("Sortino", f"{_m_mk['sortino']:.3f}" if not pd.isna(_m_mk['sortino']) else "—",
+            "penaliza só quedas"), unsafe_allow_html=True)
+        _cls_dd_mk = "pos" if _m_mk["max_dd"] >= m_port["max_dd"] else "warn"
+        mk6.markdown(kpi("Max Drawdown", f"{_m_mk['max_dd']*100:.2f}%",
+            f"HRP+BL {m_port['max_dd']*100:.1f}%", _cls_dd_mk), unsafe_allow_html=True)
+        mk7.markdown(kpi("Calmar Ratio", f"{_m_mk['calmar']:.3f}" if not pd.isna(_m_mk['calmar']) else "—",
+            f"HRP+BL {m_port['calmar']:.3f}"), unsafe_allow_html=True)
+
 st.divider()
 
 
@@ -2741,6 +2785,25 @@ with tab3:
                 f"{_m_pl2['max_dd']*100:.2f}%",
                 f"{_m_pl2['calmar']:.3f}" if not pd.isna(_m_pl2['calmar']) else "—",
                 f"+{_acum_pl2:.1f}%",
+            ]
+
+    # Adicionar coluna do Markowitz se aplicado
+    if st.session_state.get("mk_port_ret") is not None:
+        _mk_ret2 = st.session_state["mk_port_ret"]
+        _mk_idx2 = _mk_ret2.index.intersection(cdi_aligned.index)
+        if len(_mk_idx2) > 12:
+            _mk_r2   = _mk_ret2.reindex(_mk_idx2).fillna(0)
+            _mk_cdi2 = cdi_aligned.reindex(_mk_idx2).fillna(0)
+            _m_mk2   = metrics(_mk_r2, _mk_cdi2)
+            _acum_mk2 = (_m_mk2["cum"].iloc[-1]-1)*100
+            df_metrics["🎯 Markowitz"] = [
+                f"{_m_mk2['ann_ret']*100:.2f}%",
+                f"{_m_mk2['ann_vol']*100:.2f}%",
+                f"{_m_mk2['sharpe']:.3f}",
+                f"{_m_mk2['sortino']:.3f}" if not pd.isna(_m_mk2['sortino']) else "—",
+                f"{_m_mk2['max_dd']*100:.2f}%",
+                f"{_m_mk2['calmar']:.3f}" if not pd.isna(_m_mk2['calmar']) else "—",
+                f"+{_acum_mk2:.1f}%",
             ]
 
     st.dataframe(df_metrics, use_container_width=True)
