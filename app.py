@@ -6399,6 +6399,26 @@ with tab14:
         )
         st.plotly_chart(fig_cj, use_container_width=True)
 
+        # ── DIAGNÓSTICO TEMPORÁRIO DO CDI ─────────────────────────────────────
+        with st.expander("🔧 Diagnóstico CDI (temporário)", expanded=True):
+            st.markdown("**Últimos 8 meses — valores reais lidos:**")
+            _diag_cdi = []
+            for _d in cdi_para_ciclo.index[-8:]:
+                _du = _dias_uteis_mes(_d)
+                _cdi_m = cdi_para_ciclo[_d] * 100
+                _cdi_a = cdi_anual_bruto[_d]
+                _cdi_s = cdi_suave[_d]
+                _diag_cdi.append(
+                    f"{_d.strftime('%b/%Y')}: CDI mensal={_cdi_m:.3f}% | "
+                    f"dias úteis={_du} | anual={_cdi_a:.2f}% | suave={_cdi_s:.2f}%"
+                )
+            for _linha in _diag_cdi:
+                st.markdown(f"<span style='font-family:monospace;font-size:11px'>{_linha}</span>",
+                            unsafe_allow_html=True)
+            st.caption(f"Último mês na série: {cdi_para_ciclo.index[-1].strftime('%b/%Y')} "
+                       f"· Hoje: {pd.Timestamp.today().strftime('%d/%b/%Y')} "
+                       f"· Total de meses: {len(cdi_para_ciclo)}")
+
         # ── Cards de estatísticas dos ciclos ──────────────────────────────────
         ciclos_corte = [c for c in ciclos if c["tipo"] == "Corte"]
         ciclos_alta  = [c for c in ciclos if c["tipo"] == "Alta"]
