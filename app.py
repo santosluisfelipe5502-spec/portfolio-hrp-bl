@@ -2218,6 +2218,55 @@ tanto o que os dados históricos dizem quanto o que você acredita que vai acont
             "quanto as visões táticas do investidor via BL."
         )
 
+    # ── Seção 1b: Markowitz (comparação) ──────────────────────────────────────
+    with st.expander("🎯 O modelo de comparação — Markowitz", expanded=False):
+        st.markdown("""
+**Otimização de Média-Variância (Markowitz)**
+_Harry Markowitz, 1952 — Prêmio Nobel de Economia_
+
+É o modelo fundador da teoria moderna de portfólios. Para cada nível de risco
+(volatilidade), ele encontra a combinação de ativos que entrega o **máximo retorno
+esperado**. O conjunto de todos esses pontos ótimos forma a **fronteira eficiente**.
+
+**Como funciona na prática:**
+- Estima o retorno esperado e a volatilidade de cada ativo (pelo histórico)
+- Calcula a matriz de covariância (como os ativos se movem juntos)
+- Resolve um problema de otimização: maximizar retorno dado um risco alvo
+- Resultado: a carteira "matematicamente ótima" para aquele nível de risco
+        """)
+
+        st.warning("""
+**⚠️ Pontos de falha do Markowitz — por que usamos o HRP como base:**
+
+O Markowitz é elegante na teoria, mas tem fragilidades conhecidas na prática:
+
+1. **Superestima o passado** — assume que os retornos históricos vão se repetir.
+Um ativo que subiu muito (ex: Bitcoin) ganha peso excessivo, mesmo que essa
+performance dificilmente se repita.
+
+2. **Extremamente sensível a erros de estimação** — pequenas mudanças nos retornos
+esperados causam grandes mudanças nos pesos. É instável.
+
+3. **Concentração em poucos ativos** — tende a alocar tudo em 2-3 ativos, ignorando
+a diversificação. O oposto do que um portfólio robusto deveria ser.
+
+4. **Precisa inverter a matriz de covariância** — operação numericamente instável
+quando os ativos são correlacionados (o que é comum em renda fixa).
+
+5. **"Error maximization"** — como diz López de Prado, o Markowitz tende a
+maximizar os *erros* de estimação em vez do retorno real.
+        """)
+
+        st.info("""
+💡 **Por isso o dashboard usa o HRP como modelo principal.** O HRP não depende de
+estimar retornos futuros (só da estrutura de risco), não inverte matrizes e distribui
+o risco de forma diversificada. O Markowitz está aqui como **ponto de comparação** —
+para você ver o contraste entre a "otimização teórica" (que parece melhor olhando
+para trás) e a "robustez prática" do HRP (que se comporta melhor no futuro real).
+
+Use a aba **🎯 Markowitz** para confrontar os três modelos: HRP+BL, Customizado e Markowitz.
+        """)
+
     # ── Seção 2: Os Ativos ────────────────────────────────────────────────────
     with st.expander("📦 Os ativos da carteira", expanded=False):
         ativos_info = [
