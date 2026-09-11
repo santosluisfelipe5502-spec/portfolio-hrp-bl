@@ -7327,9 +7327,11 @@ with tab15:
                     f"{c['name']} {w_escolhido[i]*100:.0f}%"
                     for i, c in enumerate(ASSET_CFG) if w_escolhido[i] >= 0.001
                 ]
-                st.success("✅ Carteira Markowitz salva! Aparece agora como linha roxa "
-                           "nos gráficos de Retorno acumulado e Drawdown.")
+                st.success("✅ Carteira Markowitz salva! Aparece agora nos KPIs do topo, "
+                           "na aba Métricas e nos gráficos de Retorno e Drawdown.")
                 st.balloons()
+                # Forçar re-renderização para atualizar KPIs do topo e Métricas
+                st.rerun()
 
             if st.session_state.get("mk_port_ret") is not None:
                 if st.button("🗑️ Remover Markowitz das outras abas", key="mk_remover"):
