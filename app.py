@@ -6604,30 +6604,39 @@ with tab14:
                 cdi_para_ciclo = cdi_para_ciclo.iloc[:-1]
 
     # Usar a série SELIC ANUALIZADA do BCB (SGS 4390 = Selic acumulada no mês,
-    # já em % a.a.). Isso elimina o problema de dias úteis/feriados que a
-    # anualização manual do CDI mensal causava (o vale artificial em junho).
-    # A taxa já vem limpa, refletindo exatamente a Selic de cada mês.
+    # já em % a.a.). Isso elimina o problema de dias úteis/feriados.
+    # Se falhar ou vier vazia, cai no fallback do CDI mensal anualizado.
     @st.cache_data(ttl=3600)
     def _fetch_selic_anual():
-        return fetch_bcb_serie(4390, divisor=1.0)  # 4390 = Selic % a.a.
+        try:
+            return fetch_bcb_serie(4390, divisor=1.0)
+        except Exception:
+            return None
 
-    selic_anual_raw = _fetch_selic_anual()
-    if selic_anual_raw is not None and len(selic_anual_raw) > 12:
-        # Alinhar ao índice mensal e ao período do portfólio
-        selic_s = selic_anual_raw["valor"].copy()
-        selic_s.index = selic_s.index + pd.offsets.MonthEnd(0)
-        # Remover mês corrente incompleto
-        _per_hoje = pd.Period(pd.Timestamp.now(), freq="M")
-        selic_s = selic_s[selic_s.index.to_period("M") < _per_hoje]
-        # Limitar ao período do portfólio
-        selic_s = selic_s[(selic_s.index >= cdi_para_ciclo.index[0]) &
-                          (selic_s.index <= cdi_para_ciclo.index[-1] + pd.offsets.MonthEnd(1))]
-        cdi_anual_bruto = selic_s
-        _fonte_juros = "Selic anualizada (BCB 4390)"
-    else:
-        # Fallback: anualizar o CDI mensal por 12 (menos preciso, mas funciona)
+    cdi_anual_bruto = None
+    _fonte_juros = "?"
+    try:
+        selic_anual_raw = _fetch_selic_anual()
+        if selic_anual_raw is not None and len(selic_anual_raw) > 12:
+            selic_s = selic_anual_raw["valor"].copy()
+            # Normalizar índice para fim de mês
+            selic_s.index = pd.to_datetime(selic_s.index) + pd.offsets.MonthEnd(0)
+            # Reindexar sobre o mesmo eixo do CDI do portfólio (ffill para casar meses)
+            selic_alinhada = selic_s.reindex(cdi_para_ciclo.index, method="ffill")
+            # Se a maioria dos pontos casou, usar a Selic
+            if selic_alinhada.notna().sum() >= len(cdi_para_ciclo) * 0.7:
+                cdi_anual_bruto = selic_alinhada.ffill().bfill()
+                _fonte_juros = "Selic anualizada (BCB 4390)"
+    except Exception:
+        cdi_anual_bruto = None
+
+    # Fallback: anualizar o CDI mensal por 12 (funciona sempre)
+    if cdi_anual_bruto is None or cdi_anual_bruto.notna().sum() < 12:
         cdi_anual_bruto = ((1 + cdi_para_ciclo) ** 12 - 1) * 100
         _fonte_juros = "CDI mensal anualizado (fallback)"
+
+    # Garantir alinhamento de índice com cdi_para_ciclo
+    cdi_anual_bruto = cdi_anual_bruto.reindex(cdi_para_ciclo.index).ffill().bfill()
 
     # Suavização leve trailing só para tirar micro-ruído (não distorce degraus)
     cdi_suave = cdi_anual_bruto.rolling(2, min_periods=1).mean()
