@@ -6607,26 +6607,28 @@ with tab14:
     # já em % a.a.). Isso elimina o problema de dias úteis/feriados.
     # Se falhar ou vier vazia, cai no fallback do CDI mensal anualizado.
     @st.cache_data(ttl=3600)
-    def _fetch_selic_anual():
+    def _fetch_selic_meta():
+        # Série 432 = Meta Selic do Copom (% a.a., diária).
+        # É a taxa anual direta, muda em degraus quando o Copom decide.
         try:
-            return fetch_bcb_serie(4390, divisor=1.0)
+            return fetch_bcb_serie(432, divisor=1.0)
         except Exception:
             return None
 
     cdi_anual_bruto = None
     _fonte_juros = "?"
     try:
-        selic_anual_raw = _fetch_selic_anual()
-        if selic_anual_raw is not None and len(selic_anual_raw) > 12:
-            selic_s = selic_anual_raw["valor"].copy()
-            # Normalizar índice para fim de mês
-            selic_s.index = pd.to_datetime(selic_s.index) + pd.offsets.MonthEnd(0)
-            # Reindexar sobre o mesmo eixo do CDI do portfólio (ffill para casar meses)
-            selic_alinhada = selic_s.reindex(cdi_para_ciclo.index, method="ffill")
-            # Se a maioria dos pontos casou, usar a Selic
+        selic_raw = _fetch_selic_meta()
+        if selic_raw is not None and len(selic_raw) > 100:
+            selic_s = selic_raw["valor"].copy()
+            selic_s.index = pd.to_datetime(selic_s.index)
+            # Agregar diária → mensal (último valor do mês = Selic vigente no fim do mês)
+            selic_mensal = selic_s.resample("ME").last()
+            # Reindexar sobre o eixo do portfólio, ffill para casar
+            selic_alinhada = selic_mensal.reindex(cdi_para_ciclo.index, method="ffill")
             if selic_alinhada.notna().sum() >= len(cdi_para_ciclo) * 0.7:
                 cdi_anual_bruto = selic_alinhada.ffill().bfill()
-                _fonte_juros = "Selic anualizada (BCB 4390)"
+                _fonte_juros = "Meta Selic Copom (BCB 432)"
     except Exception:
         cdi_anual_bruto = None
 
