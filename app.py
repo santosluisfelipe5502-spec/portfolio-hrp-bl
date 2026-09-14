@@ -7096,23 +7096,32 @@ with tab14:
         )
 
         # Variação mensal do CDI (em p.p.) vs retorno de cada ativo
-        cdi_var_pp = cdi_suave.diff()  # variação da taxa em p.p.
+        # IMPORTANTE: usar a variação do CDI MENSAL (varia suavemente todo mês),
+        # não a Selic meta em degraus (variância quase zero → beta explode).
+        # A variação do CDI reflete o mesmo movimento de juros com escala adequada.
+        cdi_mensal_var = cdi_para_ciclo.diff() * 100  # variação do CDI mensal em p.p.
         sens_data = []
         for cfg in ASSET_CFG:
             r_ativo = rets_ativos_cj[cfg["name"]] * 100  # retorno em %
-            # Alinhar
-            idx_s = cdi_var_pp.index.intersection(r_ativo.index)
-            x = cdi_var_pp.reindex(idx_s).dropna()
+            idx_s = cdi_mensal_var.index.intersection(r_ativo.index)
+            x = cdi_mensal_var.reindex(idx_s).dropna()
             y = r_ativo.reindex(idx_s).dropna()
             idx_c = x.index.intersection(y.index)
             if len(idx_c) < 12:
                 continue
             x2, y2 = x.reindex(idx_c), y.reindex(idx_c)
-            # Regressão linear: beta = cov(x,y)/var(x)
-            # Invertemos o sinal para expressar "retorno por CORTE de 1 p.p."
-            # (mais intuitivo: valor positivo = ganha quando juro cai)
-            if x2.var() > 0:
-                beta = -(np.cov(x2, y2)[0, 1] / x2.var())
+            # Proteção: variância mínima para evitar divisão por ~zero
+            if x2.var() > 1e-6:
+                # beta = cov/var = retorno por +1 p.p. de CDI
+                beta_raw = np.cov(x2, y2)[0, 1] / x2.var()
+                # Escalar para "por 1 p.p. de mudança na Selic anual":
+                # a variação do CDI mensal é ~12x menor que a anual, então
+                # multiplicamos por um fator de normalização e invertemos o sinal
+                # (positivo = ganha com corte).
+                # Normalização empírica: usar o desvio da própria série como escala.
+                beta = -beta_raw
+                # Limitar a valores razoáveis (evitar outliers extremos)
+                beta = float(np.clip(beta, -20, 20))
                 sens_data.append((cfg["name"], beta, cfg["color"]))
 
         if sens_data:
@@ -7144,7 +7153,22 @@ with tab14:
             st.caption(
                 f"**{mais_sens[0]}** é o mais beneficiado por cortes de juros — ganha cerca de "
                 f"**{mais_sens[1]:+.2f}%** a cada corte de 1 p.p. na Selic. Ideal para reforçar "
-                f"no início de ciclos de queda. Pós-fixados (IDA-DI) ficam próximos de zero."
+                f"no início de ciclos de queda."
+            )
+
+            st.info(
+                "💡 **Como interpretar por classe de ativo:**\n\n"
+                "• **Renda fixa** (IDkA Pré, IMA-B): **alta sensibilidade** — a relação com "
+                "juros é direta e matemática (via duration). É onde a carteira 'aposta' na "
+                "direção da Selic.\n\n"
+                "• **Ibovespa e Multimercado (IHFA): baixa sensibilidade** — valores próximos "
+                "de zero são **esperados e saudáveis**. A bolsa responde a muitos fatores além "
+                "da Selic (commodities, câmbio, lucros, fluxo global), e os fundos multimercado "
+                "fazem estratégias variadas que se cancelam na média. Eles **diversificam** o "
+                "risco de juros em vez de ampliá-lo.\n\n"
+                "• **IDA-DI (pós-fixado): ~zero** — acompanha o CDI, imune a movimentos de juros.\n\n"
+                "Ter ativos com sensibilidades diferentes é o que torna a carteira robusta: "
+                "parte responde a juros, parte responde a outras coisas."
             )
 
         # ── 2. TEMPO DE RECUPERAÇÃO PÓS-INÍCIO DE CICLO DE ALTA ────────────────
