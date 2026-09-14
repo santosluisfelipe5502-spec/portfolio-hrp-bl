@@ -791,34 +791,26 @@ with st.sidebar:
     )
     st.divider()
 
-    st.markdown("#### CDI (taxa livre de risco)")
-    use_auto_cdi = st.toggle("Buscar CDI automaticamente (BCB)", value=True)
+    # ── Fontes de dados (automáticas) ─────────────────────────────────────────
+    # Os arquivos ANBIMA/B3 são atualizados via GitHub; CDI/PTAX vêm da API do BCB
+    # e Ibovespa/SPY/TLT do Yahoo Finance — tudo automático, sem upload manual.
+    use_auto_cdi = True
+    use_auto_ptax = True
     cdi_file = None
-    if not use_auto_cdi:
-        cdi_file = st.file_uploader("Upload CDI (CSV/Excel)", type=["csv","xls","xlsx"], key="cdi")
-
-    st.divider()
-    st.markdown("#### Índices de mercado")
-    st.caption("Faça upload dos arquivos ANBIMA/B3. Deixe em branco para usar dados simulados.")
-
-    uploads = {}
-    for cfg in ASSET_CFG:
-        if cfg["key"] == "INTL":
-            continue
-        label = (f"{cfg['name']} (CSV Investing.com ou Excel B3)"
-                 if cfg["name"] == "Ibovespa" else cfg["name"])
-        uploads[cfg["name"]] = st.file_uploader(
-            label, type=["csv","xls","xlsx"], key=cfg["key"]
-        )
-
-    st.markdown("**Internacional** (40% SPY + 60% TLT)")
-    spy_file = st.file_uploader("SPY",     type=["csv","xls","xlsx"], key="SPY")
-    tlt_file = st.file_uploader("TLT",     type=["csv","xls","xlsx"], key="TLT")
-    st.markdown("**PTAX (USD/BRL)** — conversão cambial")
-    use_auto_ptax = st.toggle("Buscar PTAX automaticamente (BCB)", value=True)
     ptax_file = None
-    if not use_auto_ptax:
-        ptax_file = st.file_uploader("Upload PTAX (CSV/Excel)", type=["csv","xls","xlsx"], key="ptax")
+    spy_file = None
+    tlt_file = None
+    uploads = {}  # sem uploads manuais — dados vêm do repositório
+
+    st.markdown("#### 📡 Fontes de dados")
+    st.markdown(
+        "<div style='font-size:12px;color:#888780;line-height:1.6'>"
+        "✅ <strong>CDI, PTAX, IPCA</strong> — API Banco Central<br>"
+        "✅ <strong>Ibovespa, SPY, TLT</strong> — Yahoo Finance<br>"
+        "✅ <strong>ANBIMA</strong> (IDkA, IMA-B, IHFA, IDA) — repositório GitHub"
+        "</div>",
+        unsafe_allow_html=True
+    )
 
     st.divider()
     st.markdown("#### Período de análise")
@@ -6248,6 +6240,143 @@ with tab12:
         f"{contribuicoes_totais[menor_contrib]:+.2f}%</div>"
         f"</div>", unsafe_allow_html=True
     )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── CONTRIBUIÇÃO DE RISCO POR ATIVO (Risk Parity Check) ────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    st.divider()
+    st.markdown("<div class='section-title'>contribuição de risco por ativo</div>",
+                unsafe_allow_html=True)
+    st.markdown(
+        "Diferente da contribuição de **retorno** acima, aqui vemos quanto cada ativo "
+        "contribui para o **risco total** do portfólio. Um ativo pode ter peso pequeno "
+        "mas dominar o risco se for muito volátil. Cálculo **matematicamente exato** "
+        "(decomposição da volatilidade via matriz de covariância)."
+    )
+
+    # Matriz de retornos e covariância (anualizada)
+    ret_risk_dict = {}
+    for cfg in ASSET_CFG:
+        r = (series[cfg["name"]]["valor"].pct_change().dropna()
+             .reindex(common_idx).ffill().fillna(0))
+        ret_risk_dict[cfg["name"]] = r
+    ret_risk_df = pd.DataFrame(ret_risk_dict).dropna()
+    cov_risk = ret_risk_df.cov().values * 12  # anualizada
+
+    def contribuicao_risco(pesos_arr):
+        """Contribuição marginal de risco de cada ativo (soma = vol do portfólio)."""
+        w = np.array(pesos_arr, dtype=float)
+        w = w / w.sum() if w.sum() > 0 else w
+        vol_p = np.sqrt(w @ cov_risk @ w)
+        if vol_p <= 0:
+            return None, 0
+        mrc = w * (cov_risk @ w) / vol_p  # contribuição absoluta
+        pct = mrc / vol_p * 100           # contribuição percentual
+        return pct, vol_p * 100
+
+    # Montar pesos dos 3 modelos
+    modelos_risk = []
+    # HRP+BL (perfil ativo)
+    w_hrp_risk = [WEIGHTS_ATIVO.get(c["name"], c["w"]) for c in ASSET_CFG]
+    modelos_risk.append(("🔷 HRP+BL", w_hrp_risk))
+    # Customizado
+    custom_w_risk = {c["name"]: st.session_state.get(f"rebal_{c['name']}",
+                     c["w"]*100)/100 for c in ASSET_CFG}
+    if abs(sum(custom_w_risk.values()) - 1.0) < 0.02:
+        modelos_risk.append(("🔶 Customizado", [custom_w_risk[c["name"]] for c in ASSET_CFG]))
+    # Markowitz (se aplicado)
+    if st.session_state.get("mk_composicao") is not None:
+        # Recuperar pesos do Markowitz a partir da composição salva não é trivial;
+        # usar o mk_port_ret para inferir seria complexo. Em vez disso, recalcular
+        # o Máx Sharpe rapidamente para exibir.
+        try:
+            w_mk_risk = markowitz_max_sharpe(ret_risk_df, rf_annual=rf_ann)
+            modelos_risk.append(("🟣 Markowitz", list(w_mk_risk)))
+        except Exception:
+            pass
+
+    # ── Gráfico comparativo: peso vs contribuição de risco ────────────────────
+    st.markdown("**Peso na carteira × Contribuição para o risco** (HRP+BL)")
+    pct_hrp, vol_hrp_total = contribuicao_risco(w_hrp_risk)
+    if pct_hrp is not None:
+        nomes_r = [c["name"] for c in ASSET_CFG]
+        pesos_pct = [w_hrp_risk[i]/sum(w_hrp_risk)*100 for i in range(len(ASSET_CFG))]
+
+        fig_risk = go.Figure()
+        fig_risk.add_trace(go.Bar(
+            x=nomes_r, y=pesos_pct, name="Peso na carteira",
+            marker_color="rgba(55,138,221,0.6)"))
+        fig_risk.add_trace(go.Bar(
+            x=nomes_r, y=list(pct_hrp), name="Contribuição de risco",
+            marker_color="#E24B4A"))
+        fig_risk.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+            height=320, barmode="group", font=dict(color="#1a1a18"),
+            margin=dict(l=0, r=0, t=8, b=0),
+            legend=dict(orientation="h", y=1.05, x=0, font=dict(color="#1a1a18")),
+            xaxis=dict(tickfont=dict(color="#444441", size=10), color="#1a1a18"),
+            yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                       tickfont=dict(color="#444441"), color="#1a1a18"),
+        )
+        st.plotly_chart(fig_risk, use_container_width=True)
+        st.caption(f"Volatilidade total do HRP+BL: {vol_hrp_total:.2f}% a.a. "
+                   f"Quando a barra vermelha (risco) supera a azul (peso), o ativo "
+                   f"contribui mais para o risco do que sua fatia sugere.")
+
+    # ── Tabela comparativa dos 3 modelos ──────────────────────────────────────
+    st.markdown("**Contribuição de risco por ativo — comparação entre modelos**")
+    tabela_risk = {"Ativo": [c["name"] for c in ASSET_CFG]}
+    for nome_modelo, pesos in modelos_risk:
+        pct, _ = contribuicao_risco(pesos)
+        if pct is not None:
+            tabela_risk[nome_modelo] = [f"{p:.1f}%" for p in pct]
+    df_risk = pd.DataFrame(tabela_risk).set_index("Ativo")
+    st.dataframe(df_risk, use_container_width=True)
+
+    # ── Insights automáticos ──────────────────────────────────────────────────
+    if pct_hrp is not None:
+        # Ativo que mais concentra risco vs peso
+        analise = []
+        for i, cfg in enumerate(ASSET_CFG):
+            peso = pesos_pct[i]
+            risco = pct_hrp[i]
+            analise.append((cfg["name"], peso, risco, risco - peso))
+        # Maior desproporção (risco muito acima do peso)
+        mais_arriscado = max(analise, key=lambda x: x[3])
+        # Concentração de risco (top ativo)
+        top_risco = max(analise, key=lambda x: x[2])
+
+        col_r1, col_r2 = st.columns(2)
+        col_r1.markdown(
+            f"<div class='metric-card' style='border-top:3px solid #E24B4A'>"
+            f"<div class='metric-label'>Maior concentração de risco</div>"
+            f"<div class='metric-value' style='font-size:20px;color:#E24B4A'>{top_risco[0]}</div>"
+            f"<div class='metric-sub'>Peso {top_risco[1]:.1f}% → "
+            f"<strong>{top_risco[2]:.1f}% do risco</strong></div>"
+            f"</div>", unsafe_allow_html=True)
+        col_r2.markdown(
+            f"<div class='metric-card' style='border-top:3px solid #C4770A'>"
+            f"<div class='metric-label'>Maior risco vs peso</div>"
+            f"<div class='metric-value' style='font-size:20px;color:#C4770A'>{mais_arriscado[0]}</div>"
+            f"<div class='metric-sub'>Peso {mais_arriscado[1]:.1f}% mas "
+            f"<strong>+{mais_arriscado[3]:.1f} p.p.</strong> de risco extra</div>"
+            f"</div>", unsafe_allow_html=True)
+
+        if mais_arriscado[3] > 5:
+            st.info(
+                f"💡 O **{mais_arriscado[0]}** tem peso de apenas {mais_arriscado[1]:.1f}% mas "
+                f"contribui com {mais_arriscado[2]:.1f}% do risco total — "
+                f"**{mais_arriscado[3]:.1f} pontos percentuais a mais** que sua fatia. "
+                f"Isso é típico de ativos voláteis (Bitcoin, Ibovespa). O HRP já limita "
+                f"esses pesos justamente para o risco não se concentrar demais."
+            )
+
+        st.caption(
+            "Contribuição de risco = decomposição exata da volatilidade do portfólio "
+            "(soma das contribuições = vol total). Baseada na matriz de covariância real "
+            "dos retornos — sem estimativas ou projeções. Um portfólio 'risk parity' "
+            "ideal teria todos os ativos contribuindo igualmente para o risco."
+        )
 
 
 # ── Tab 13: Portfólio livre ───────────────────────────────────────────────────
