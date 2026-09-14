@@ -6669,6 +6669,30 @@ with tab14:
                            "cdi_ini": cdi_suave[ini_idx],
                            "cdi_fim": cdi_suave[direcao.index[-1]]})
 
+    # ── DIAGNÓSTICO DETALHADO (temporário) ────────────────────────────────────
+    with st.expander("🔧 Diagnóstico detalhado (temporário)", expanded=True):
+        st.markdown(f"**Fonte da taxa:** {_fonte_juros}")
+        st.markdown(f"**cdi_para_ciclo:** {len(cdi_para_ciclo)} pontos · "
+                    f"NaN: {cdi_para_ciclo.isna().sum()}")
+        st.markdown(f"**cdi_anual_bruto:** {len(cdi_anual_bruto)} pontos · "
+                    f"NaN: {cdi_anual_bruto.isna().sum()}")
+        st.markdown(f"**cdi_suave:** {len(cdi_suave)} pontos · "
+                    f"NaN: {cdi_suave.isna().sum()}")
+        st.markdown(f"**variacao (diff 4):** min={variacao.min():.2f} · "
+                    f"max={variacao.max():.2f} · NaN: {variacao.isna().sum()}")
+        st.markdown(f"**direcao:** altas={int((direcao==1).sum())} · "
+                    f"cortes={int((direcao==-1).sum())} · "
+                    f"estável={int((direcao==0).sum())}")
+        st.markdown(f"**Ciclos detectados:** {len(ciclos)}")
+        if len(cdi_anual_bruto) > 0:
+            st.markdown("**Últimos 12 valores de cdi_anual_bruto:**")
+            _vals = []
+            for _d in cdi_anual_bruto.index[-12:]:
+                _v = cdi_anual_bruto[_d]
+                _vals.append(f"{_d.strftime('%b/%y')}={_v:.1f}" if pd.notna(_v) else f"{_d.strftime('%b/%y')}=NaN")
+            st.markdown(f"<span style='font-family:monospace;font-size:10px'>{' | '.join(_vals)}</span>",
+                        unsafe_allow_html=True)
+
     if not ciclos:
         st.info("Não foi possível detectar ciclos claros de juros no período.")
     else:
