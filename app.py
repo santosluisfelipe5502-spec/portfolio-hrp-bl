@@ -2212,6 +2212,39 @@ tanto o que os dados históricos dizem quanto o que você acredita que vai acont
 - Combina os dois com peso proporcional à sua confiança
 - Resultado: retornos esperados ajustados que alimentam o HRP
             """)
+
+        st.markdown("""
+---
+**🛡️ Por que o HRP é mais robusto que o Markowitz para montar um portfólio?**
+
+São três diferenças fundamentais que tornam o HRP mais confiável no mundo real:
+
+**1. Não precisa prever retornos futuros.**
+O Markowitz depende de estimar quanto cada ativo vai render — e prever retorno é
+notoriamente difícil e impreciso. O HRP usa **apenas a estrutura de risco**
+(volatilidades e correlações), que é muito mais estável e previsível ao longo do
+tempo. Menos suposições frágeis = menos erro.
+
+**2. Nunca inverte a matriz de covariância.**
+O Markowitz precisa inverter essa matriz — uma operação numericamente instável
+quando os ativos são correlacionados (o que é a regra, não a exceção, em renda
+fixa). Pequenos erros nos dados viram grandes distorções nos pesos. O HRP substitui
+essa inversão por uma **clusterização hierárquica**, que é estável mesmo com ativos
+muito correlacionados como os quatro índices de renda fixa da carteira.
+
+**3. Diversifica de verdade, por natureza.**
+O Markowitz tende a concentrar tudo em 2-3 ativos que parecem ótimos no histórico.
+O HRP distribui o risco **hierarquicamente** — primeiro entre grandes grupos (renda
+fixa, âncora, equity, alternativos), depois dentro de cada grupo. Isso garante que
+nenhum ativo isolado domine o portfólio, mesmo que tenha brilhado no passado.
+
+**O resultado:** enquanto o Markowitz maximiza a performance *aparente* no passado
+(e por isso costuma decepcionar no futuro), o HRP maximiza a **robustez** — a
+capacidade de se comportar bem em condições que ainda não aconteceram. Para um
+portfólio real, que precisa atravessar crises, mudanças de regime de juros e
+eventos imprevistos, a robustez vale mais que a otimização perfeita do retrovisor.
+        """)
+
         st.info(
             "💡 **Juntos:** o HRP define a estrutura de risco e o BL define as expectativas "
             "de retorno. Os pesos finais refletem tanto a diversificação robusta do HRP "
@@ -6570,31 +6603,34 @@ with tab14:
             if pd.notna(_med_recente) and cdi_para_ciclo.iloc[-1] < _med_recente * 0.6:
                 cdi_para_ciclo = cdi_para_ciclo.iloc[:-1]
 
-    # Anualização correta da taxa CDI: o CDI mensal do BCB é a soma dos dias
-    # ÚTEIS do mês (19 a 23), então anualizar por ^12 amplifica o ruído
-    # (dá 11.9% a 15.4% para uma Selic real de 14%). Solução: estimar os dias
-    # úteis de cada mês pelo calendário, converter para taxa diária equivalente
-    # e anualizar por 252 dias úteis (convenção do mercado brasileiro).
-    def _dias_uteis_mes(ts):
-        try:
-            inicio = ts.replace(day=1)
-            return max(1, len(pd.bdate_range(inicio, ts)))
-        except Exception:
-            return 21
+    # Usar a série SELIC ANUALIZADA do BCB (SGS 4390 = Selic acumulada no mês,
+    # já em % a.a.). Isso elimina o problema de dias úteis/feriados que a
+    # anualização manual do CDI mensal causava (o vale artificial em junho).
+    # A taxa já vem limpa, refletindo exatamente a Selic de cada mês.
+    @st.cache_data(ttl=3600)
+    def _fetch_selic_anual():
+        return fetch_bcb_serie(4390, divisor=1.0)  # 4390 = Selic % a.a.
 
-    cdi_anual_bruto = pd.Series(index=cdi_para_ciclo.index, dtype=float)
-    for _d in cdi_para_ciclo.index:
-        _du = _dias_uteis_mes(_d)
-        _cdi_m = cdi_para_ciclo[_d]
-        if pd.notna(_cdi_m) and _cdi_m > -1:
-            _taxa_dia = (1 + _cdi_m) ** (1 / _du) - 1
-            cdi_anual_bruto[_d] = ((1 + _taxa_dia) ** 252 - 1) * 100
-        else:
-            cdi_anual_bruto[_d] = np.nan
-    cdi_anual_bruto = cdi_anual_bruto.ffill()
+    selic_anual_raw = _fetch_selic_anual()
+    if selic_anual_raw is not None and len(selic_anual_raw) > 12:
+        # Alinhar ao índice mensal e ao período do portfólio
+        selic_s = selic_anual_raw["valor"].copy()
+        selic_s.index = selic_s.index + pd.offsets.MonthEnd(0)
+        # Remover mês corrente incompleto
+        _per_hoje = pd.Period(pd.Timestamp.now(), freq="M")
+        selic_s = selic_s[selic_s.index.to_period("M") < _per_hoje]
+        # Limitar ao período do portfólio
+        selic_s = selic_s[(selic_s.index >= cdi_para_ciclo.index[0]) &
+                          (selic_s.index <= cdi_para_ciclo.index[-1] + pd.offsets.MonthEnd(1))]
+        cdi_anual_bruto = selic_s
+        _fonte_juros = "Selic anualizada (BCB 4390)"
+    else:
+        # Fallback: anualizar o CDI mensal por 12 (menos preciso, mas funciona)
+        cdi_anual_bruto = ((1 + cdi_para_ciclo) ** 12 - 1) * 100
+        _fonte_juros = "CDI mensal anualizado (fallback)"
 
-    # Suavização leve (trailing, não centrada) para não distorcer a ponta final
-    cdi_suave = cdi_anual_bruto.rolling(3, min_periods=1).mean()
+    # Suavização leve trailing só para tirar micro-ruído (não distorce degraus)
+    cdi_suave = cdi_anual_bruto.rolling(2, min_periods=1).mean()
 
     # Detecção de direção: comparar taxa com 4 meses atrás.
     # Limiar de 0.30 p.p. em 4 meses captura cortes/altas graduais (0.25 p.p./reunião)
@@ -6669,24 +6705,22 @@ with tab14:
         st.plotly_chart(fig_cj, use_container_width=True)
 
         # ── DIAGNÓSTICO TEMPORÁRIO DO CDI ─────────────────────────────────────
-        with st.expander("🔧 Diagnóstico CDI (temporário)", expanded=True):
-            st.markdown("**Últimos 8 meses — valores reais lidos:**")
+        with st.expander("🔧 Diagnóstico taxa de juros (temporário)", expanded=True):
+            st.markdown(f"**Fonte:** {_fonte_juros}")
+            st.markdown("**Últimos 8 meses — Selic anualizada:**")
             _diag_cdi = []
-            for _d in cdi_para_ciclo.index[-8:]:
-                _du = _dias_uteis_mes(_d)
-                _cdi_m = cdi_para_ciclo[_d] * 100
+            for _d in cdi_anual_bruto.index[-8:]:
                 _cdi_a = cdi_anual_bruto[_d]
-                _cdi_s = cdi_suave[_d]
+                _cdi_s = cdi_suave[_d] if _d in cdi_suave.index else _cdi_a
                 _diag_cdi.append(
-                    f"{_d.strftime('%b/%Y')}: CDI mensal={_cdi_m:.3f}% | "
-                    f"dias úteis={_du} | anual={_cdi_a:.2f}% | suave={_cdi_s:.2f}%"
+                    f"{_d.strftime('%b/%Y')}: Selic={_cdi_a:.2f}% a.a. | suave={_cdi_s:.2f}%"
                 )
             for _linha in _diag_cdi:
                 st.markdown(f"<span style='font-family:monospace;font-size:11px'>{_linha}</span>",
                             unsafe_allow_html=True)
-            st.caption(f"Último mês na série: {cdi_para_ciclo.index[-1].strftime('%b/%Y')} "
+            st.caption(f"Último mês na série: {cdi_anual_bruto.index[-1].strftime('%b/%Y')} "
                        f"· Hoje: {pd.Timestamp.today().strftime('%d/%b/%Y')} "
-                       f"· Total de meses: {len(cdi_para_ciclo)}")
+                       f"· Total de meses: {len(cdi_anual_bruto)}")
 
         # ── Cards de estatísticas dos ciclos ──────────────────────────────────
         ciclos_corte = [c for c in ciclos if c["tipo"] == "Corte"]
@@ -6721,7 +6755,7 @@ with tab14:
         cs3.markdown(
             f"<div style='padding:8px 12px;border-radius:6px;background:#f8f7f4;"
             f"border-left:3px solid #888780'><span style='font-size:11px;color:#888780'>"
-            f"CDI ATUAL (últ. fechado)</span><br><strong style='font-size:20px;color:#1a1a18'>"
+            f"SELIC ATUAL (últ. fechado)</span><br><strong style='font-size:20px;color:#1a1a18'>"
             f"{cdi_anual_bruto.iloc[-1]:.1f}%</strong><br>"
             f"<span style='font-size:11px;color:#888780'>{cdi_anual_bruto.index[-1].strftime('%b/%Y')}</span></div>",
             unsafe_allow_html=True)
