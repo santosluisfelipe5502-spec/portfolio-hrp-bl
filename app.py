@@ -7087,42 +7087,37 @@ with tab14:
         st.divider()
 
         # ── 1. SENSIBILIDADE A JUROS (duration efetiva medida) ────────────────
-        st.markdown("<div class='section-title'>sensibilidade a juros — duration efetiva</div>",
+        st.markdown("<div class='section-title'>sensibilidade a juros — correlação com cortes</div>",
                     unsafe_allow_html=True)
         st.markdown(
-            "Quanto cada ativo se valoriza, em média, para cada **corte de 1 ponto percentual** "
-            "na Selic. Valores positivos = o ativo ganha quando o juro cai (típico de prefixados "
-            "e NTN-B longas). Próximo de zero = imune a juros (pós-fixados)."
+            "**Correlação** entre o retorno de cada ativo e os cortes da Selic (escala −1 a +1). "
+            "Perto de **+1** = o ativo sobe de forma consistente quando o juro cai (prefixados e "
+            "NTN-B longas). Perto de **0** = pouca relação com juros. É uma medida estável, "
+            "resistente a meses atípicos."
         )
 
         # Variação mensal do CDI (em p.p.) vs retorno de cada ativo
-        # IMPORTANTE: usar a variação do CDI MENSAL (varia suavemente todo mês),
-        # não a Selic meta em degraus (variância quase zero → beta explode).
-        # A variação do CDI reflete o mesmo movimento de juros com escala adequada.
-        cdi_mensal_var = cdi_para_ciclo.diff() * 100  # variação do CDI mensal em p.p.
+        # Sensibilidade a juros via CORRELAÇÃO (estável, sempre -1 a +1).
+        # Mede: quando a Selic CORTA, o ativo tende a subir? Usamos a Selic meta
+        # (cdi_anual_bruto, em degraus limpos) e correlacionamos o CORTE (-variação)
+        # com o retorno do ativo. Correlação é resistente a outliers e não explode,
+        # ao contrário do beta bruto (que dividia por variância ~zero).
+        selic_corte = -cdi_anual_bruto.diff()  # positivo quando há corte de juros
         sens_data = []
         for cfg in ASSET_CFG:
-            r_ativo = rets_ativos_cj[cfg["name"]] * 100  # retorno em %
-            idx_s = cdi_mensal_var.index.intersection(r_ativo.index)
-            x = cdi_mensal_var.reindex(idx_s).dropna()
-            y = r_ativo.reindex(idx_s).dropna()
-            idx_c = x.index.intersection(y.index)
-            if len(idx_c) < 12:
+            r_ativo = rets_ativos_cj[cfg["name"]]
+            idx_s = selic_corte.dropna().index.intersection(r_ativo.dropna().index)
+            if len(idx_s) < 12:
                 continue
-            x2, y2 = x.reindex(idx_c), y.reindex(idx_c)
-            # Proteção: variância mínima para evitar divisão por ~zero
-            if x2.var() > 1e-6:
-                # beta = cov/var = retorno por +1 p.p. de CDI
-                beta_raw = np.cov(x2, y2)[0, 1] / x2.var()
-                # Escalar para "por 1 p.p. de mudança na Selic anual":
-                # a variação do CDI mensal é ~12x menor que a anual, então
-                # multiplicamos por um fator de normalização e invertemos o sinal
-                # (positivo = ganha com corte).
-                # Normalização empírica: usar o desvio da própria série como escala.
-                beta = -beta_raw
-                # Limitar a valores razoáveis (evitar outliers extremos)
-                beta = float(np.clip(beta, -20, 20))
-                sens_data.append((cfg["name"], beta, cfg["color"]))
+            c = selic_corte.reindex(idx_s)
+            r = r_ativo.reindex(idx_s)
+            if c.std() < 1e-6 or r.std() < 1e-6:
+                sens_val = 0.0
+            else:
+                sens_val = float(c.corr(r))
+                if pd.isna(sens_val):
+                    sens_val = 0.0
+            sens_data.append((cfg["name"], sens_val, cfg["color"]))
 
         if sens_data:
             # Ordenar do maior beneficiado pelo corte (topo) ao menor
@@ -7137,13 +7132,14 @@ with tab14:
                 marker_color=cores_barra,
                 text=[f"{s[1]:+.2f}" for s in sens_data],
                 textposition="outside",
-                hovertemplate="%{y}<br>+%{x:.2f}%% a cada corte de 1 p.p. na Selic<extra></extra>",
+                hovertemplate="%{y}<br>Correlação com corte de juros: %{x:+.2f}<extra></extra>",
             ))
             fig_sens.update_layout(
                 plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
                 height=340, font=dict(color="#1a1a18"),
                 margin=dict(l=0, r=40, t=8, b=0),
-                xaxis=dict(title="Retorno (%) por corte de 1 p.p. na Selic",
+                xaxis=dict(title="Correlação com cortes de juros (−1 a +1)",
+                           range=[-1, 1],
                            gridcolor="#e8e6e0", zerolinecolor="#888780",
                            tickfont=dict(color="#444441"), color="#1a1a18"),
                 yaxis=dict(tickfont=dict(color="#444441", size=11), color="#1a1a18"),
@@ -7151,23 +7147,24 @@ with tab14:
             st.plotly_chart(fig_sens, use_container_width=True)
             mais_sens = max(sens_data, key=lambda x: x[1])
             st.caption(
-                f"**{mais_sens[0]}** é o mais beneficiado por cortes de juros — ganha cerca de "
-                f"**{mais_sens[1]:+.2f}%** a cada corte de 1 p.p. na Selic. Ideal para reforçar "
-                f"no início de ciclos de queda."
+                f"**{mais_sens[0]}** tem a maior correlação com cortes de juros "
+                f"(**{mais_sens[1]:+.2f}**) — é o que mais tende a se valorizar quando a Selic cai. "
+                f"Ideal para reforçar no início de ciclos de queda. "
+                f"Valores próximos de +1 = forte relação; próximos de 0 = pouca relação com juros."
             )
 
             st.info(
                 "💡 **Como interpretar por classe de ativo:**\n\n"
-                "• **Renda fixa** (IDkA Pré, IMA-B): **alta sensibilidade** — a relação com "
-                "juros é direta e matemática (via duration). É onde a carteira 'aposta' na "
-                "direção da Selic.\n\n"
-                "• **Ibovespa e Multimercado (IHFA): baixa sensibilidade** — valores próximos "
-                "de zero são **esperados e saudáveis**. A bolsa responde a muitos fatores além "
-                "da Selic (commodities, câmbio, lucros, fluxo global), e os fundos multimercado "
-                "fazem estratégias variadas que se cancelam na média. Eles **diversificam** o "
-                "risco de juros em vez de ampliá-lo.\n\n"
+                "• **Renda fixa** (IDkA Pré, IMA-B): **correlação alta e positiva** — sobem de "
+                "forma consistente quando a Selic cai (relação direta via duration). É onde a "
+                "carteira 'aposta' na direção dos juros.\n\n"
+                "• **Ibovespa e Multimercado (IHFA): correlação baixa** — valores próximos de "
+                "zero são **esperados e saudáveis**. A bolsa responde a muitos fatores além da "
+                "Selic (commodities, câmbio, lucros, fluxo global), e os multimercados fazem "
+                "estratégias variadas que se cancelam na média. Eles **diversificam** o risco "
+                "de juros em vez de ampliá-lo.\n\n"
                 "• **IDA-DI (pós-fixado): ~zero** — acompanha o CDI, imune a movimentos de juros.\n\n"
-                "Ter ativos com sensibilidades diferentes é o que torna a carteira robusta: "
+                "Ter ativos com correlações diferentes é o que torna a carteira robusta: "
                 "parte responde a juros, parte responde a outras coisas."
             )
 
