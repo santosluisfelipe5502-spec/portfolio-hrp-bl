@@ -106,7 +106,9 @@ warnings.filterwarnings("ignore")
 # ║    Tab 7  (~3568) — 📦 Ativos individuais                                   ║
 # ║    Tab 10 (~4177) — 📐 Janelas móveis                                       ║
 # ║    Tab 11 (~4423) — 🎲 Monte Carlo                                          ║
-# ║    Tab 12 (~4836) — 📊 Atribuição de retorno                                ║
+# ║    Tab 12 (~4836) — 📊 Atribuição de retorno + contribuição de risco        ║
+# ║    Tab 14        — 📉📈 Ciclos de juros + correlações + sensibilidade      ║
+# ║    Tab 15        — 🎯 Markowitz + fronteira eficiente + out-of-sample       ║
 # ║                                                                              ║
 # ║  COMO ADICIONAR UM NOVO ATIVO                                               ║
 # ║    1. Adicione em ASSET_CFG (linha ~124) com nome, cor, cluster e peso      ║
@@ -2380,6 +2382,9 @@ seus próprios dados.*
             ("📦 Ativos individuais", "Retorno de cada ativo separadamente com filtros de período e marcação de eventos. Use para entender a contribuição individual e identificar qual ativo protegeu ou ganhou em cada crise."),
             ("📐 Janelas móveis", "Analisa quantas janelas de 36 ou 48 meses bateram o CDI ou o IPCA. É a 'prova real' da consistência do modelo — mostra que o resultado não depende do momento de entrada."),
             ("🎲 Monte Carlo", "Projeta milhares de trajetórias possíveis para os próximos 5 anos com regimes de Markov. Use em conjunto com a aba Cenários para projeções prospectivas conectadas ao cenário macro."),
+            ("📊 Atribuição de retorno", "Decompõe o resultado do portfólio mostrando quanto cada ativo contribuiu para o RETORNO e para o RISCO total. A contribuição de risco (matematicamente exata) revela se algum ativo de peso pequeno está concentrando risco demais — como Bitcoin ou Ibovespa. Use para checar o equilíbrio do risco parity."),
+            ("📉📈 Ciclos de juros", "Detecta automaticamente os ciclos de alta e corte da Selic (via API do BCB) e mostra como cada ativo e carteira se comportaram em cada regime. Inclui sensibilidade a juros, tempo de recuperação, timing de entrada e correlações entre ativos. Use para responder: 'se a Selic cair, o que acontece com o portfólio?'"),
+            ("🎯 Markowitz", "Confronta o HRP+BL com a otimização clássica de Markowitz (fronteira eficiente). Permite escolher a carteira por Sharpe máximo, mínima volatilidade ou vol alvo. O teste out-of-sample é o diferencial: prova qual modelo é mais robusto no futuro real, não só no histórico. Use para entender por que o HRP é mais confiável que a 'otimização perfeita'."),
         ]
         for nome_aba, desc_aba in abas_info:
             st.markdown(
