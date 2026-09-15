@@ -4402,6 +4402,15 @@ with tab7:
             line=dict(color=cfg["color"], width=2),
             hovertemplate=f"<b>{cfg['name']}</b><br>%{{x|%b/%Y}}<br>%{{y:.1f}}<extra></extra>",
         ))
+        # ── DIAGNÓSTICO TEMPORÁRIO IBOVESPA ──
+        if cfg["name"] == "Ibovespa":
+            _ret_diag = (s.iloc[-1]/s.iloc[0]-1)*100
+            st.session_state["_diag_ibov"] = (
+                f"Ibov no período '{periodo_sel}': "
+                f"{s.index[0].strftime('%b/%Y')} = {s.iloc[0]:,.0f} → "
+                f"{s.index[-1].strftime('%b/%Y')} = {s.iloc[-1]:,.0f} "
+                f"({len(s)} pts) = {_ret_diag:+.1f}%"
+            )
 
     # ── Marcações de eventos ──
     if show_ev_at:
@@ -4440,6 +4449,8 @@ with tab7:
                    tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
     st.plotly_chart(fig_at, use_container_width=True)
+    if st.session_state.get("_diag_ibov"):
+        st.warning(f"🔧 {st.session_state['_diag_ibov']}")
     st.caption(f"Base 100 = primeiro dia do período selecionado ({idx_at[0].strftime('%d/%m/%Y')}). "
                f"Retornos em frequência mensal.")
 
