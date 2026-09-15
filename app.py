@@ -2652,6 +2652,85 @@ with tab1:
     )
     st.plotly_chart(fig2, use_container_width=True)
 
+    # ── Distribuição dos retornos (histograma sobreposto) ─────────────────────
+    st.divider()
+    st.markdown("<div class='section-title'>distribuição dos retornos anualizados</div>",
+                unsafe_allow_html=True)
+    st.markdown(
+        "Histograma dos retornos mensais **anualizados** de cada portfólio e benchmark. "
+        "Distribuições mais estreitas e altas = retornos consistentes (menor risco); "
+        "mais largas e espalhadas = maior volatilidade."
+    )
+
+    # Anualização composta: (1+r_mensal)^12 - 1, mais realista que ×12
+    def anualizar(serie_mensal):
+        return ((1 + serie_mensal) ** 12 - 1) * 100
+
+    dist_series = []
+    dist_series.append(("HRP+BL", anualizar(port_ret), "#378ADD"))
+    if custom_valid:
+        dist_series.append(("Customizado", anualizar(custom_ret), "#C4770A"))
+    if st.session_state.get("mk_port_ret") is not None:
+        _mk_r = st.session_state["mk_port_ret"]
+        dist_series.append(("Markowitz", anualizar(_mk_r.reindex(common_idx).fillna(0)), "#7F77DD"))
+    dist_series.append(("CDI", anualizar(cdi_aligned), "#1D9E75"))
+    dist_series.append(("IPCA", anualizar(ipca_ret), "#C4770A"))
+    dist_series.append(("Ibovespa", anualizar(ibov_ret), "#BA7517"))
+
+    fig_dist = go.Figure()
+    for nome_d, serie_d, cor_d in dist_series:
+        vals = serie_d.dropna()
+        if len(vals) < 12:
+            continue
+        # Converter cor hex para rgba translúcido
+        h = cor_d.lstrip("#")
+        r_c, g_c, b_c = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+        fig_dist.add_trace(go.Histogram(
+            x=vals.values,
+            name=nome_d,
+            opacity=0.55,
+            marker_color=f"rgba({r_c},{g_c},{b_c},0.55)",
+            marker_line=dict(color=cor_d, width=0.5),
+            nbinsx=40,
+            hovertemplate=f"{nome_d}<br>Retorno anualiz.: %{{x:.1f}}%%<br>Freq: %{{y}}<extra></extra>",
+        ))
+
+    fig_dist.update_layout(
+        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+        height=360, barmode="overlay",
+        font=dict(color="#1a1a18"),
+        margin=dict(l=0, r=0, t=8, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0, font=dict(color="#1a1a18")),
+        xaxis=dict(title="Retorno anualizado (%)", ticksuffix="%",
+                   gridcolor="#e8e6e0", zerolinecolor="#888780",
+                   tickfont=dict(color="#444441"), color="#1a1a18"),
+        yaxis=dict(title="Frequência (meses)", gridcolor="#e8e6e0",
+                   tickfont=dict(color="#444441"), color="#1a1a18"),
+    )
+    st.plotly_chart(fig_dist, use_container_width=True)
+
+    # Tabela resumo: média, desvio e amplitude de cada distribuição
+    rows_dist = []
+    for nome_d, serie_d, _ in dist_series:
+        vals = serie_d.dropna()
+        if len(vals) < 12:
+            continue
+        rows_dist.append({
+            "Série":       nome_d,
+            "Média a.a.":  f"{vals.mean():.1f}%",
+            "Desvio":      f"{vals.std():.1f}%",
+            "Mínimo":      f"{vals.min():.1f}%",
+            "Máximo":      f"{vals.max():.1f}%",
+        })
+    df_dist = pd.DataFrame(rows_dist).set_index("Série")
+    st.dataframe(df_dist, use_container_width=True)
+    st.caption(
+        "Retorno anualizado = (1 + retorno mensal)¹² − 1. O desvio indica a dispersão "
+        "(volatilidade); mínimo e máximo mostram os piores e melhores meses do período "
+        "em base anual. CDI tem distribuição concentrada (baixo risco); Ibovespa é a mais espalhada."
+    )
+
 # ── Tab 2: Drawdown ───────────────────────────────────────────────────────────
 with tab2:
     # ── Filtro de período ──
