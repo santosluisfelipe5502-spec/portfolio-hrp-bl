@@ -4395,22 +4395,15 @@ with tab7:
         s = series[cfg["name"]]["valor"].reindex(idx_at).ffill().dropna()
         if len(s) == 0:
             continue
-        s_rb = (s / s.iloc[0]) * 100
+        # Rentabilidade acumulada em % (0% no início, não base 100)
+        s_rent = (s / s.iloc[0] - 1) * 100
         fig_at.add_trace(go.Scatter(
-            x=s_rb.index, y=s_rb.values.round(2),
+            x=s_rent.index, y=s_rent.values.round(2),
             name=cfg["name"],
             line=dict(color=cfg["color"], width=2),
-            hovertemplate=f"<b>{cfg['name']}</b><br>%{{x|%b/%Y}}<br>%{{y:.1f}}<extra></extra>",
+            hovertemplate=f"<b>{cfg['name']}</b><br>%{{x|%b/%Y}}<br>"
+                          f"Rentabilidade: %{{y:+.1f}}%%<extra></extra>",
         ))
-        # ── DIAGNÓSTICO TEMPORÁRIO IBOVESPA ──
-        if cfg["name"] == "Ibovespa":
-            _ret_diag = (s.iloc[-1]/s.iloc[0]-1)*100
-            st.session_state["_diag_ibov"] = (
-                f"Ibov no período '{periodo_sel}': "
-                f"{s.index[0].strftime('%b/%Y')} = {s.iloc[0]:,.0f} → "
-                f"{s.index[-1].strftime('%b/%Y')} = {s.iloc[-1]:,.0f} "
-                f"({len(s)} pts) = {_ret_diag:+.1f}%"
-            )
 
     # ── Marcações de eventos ──
     if show_ev_at:
@@ -4443,16 +4436,16 @@ with tab7:
         margin=dict(l=0, r=40, t=8, b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                     xanchor="left", x=0, font=dict(color="#1a1a18")),
-        yaxis=dict(title="Base 100", gridcolor="#e8e6e0",
+        yaxis=dict(title="Rentabilidade acumulada (%)", ticksuffix="%",
+                   gridcolor="#e8e6e0", zerolinecolor="#888780", zerolinewidth=1.5,
                    tickfont=dict(color="#444441", size=11), color="#1a1a18"),
         xaxis=dict(gridcolor="#e8e6e0",
                    tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
     st.plotly_chart(fig_at, use_container_width=True)
-    if st.session_state.get("_diag_ibov"):
-        st.warning(f"🔧 {st.session_state['_diag_ibov']}")
-    st.caption(f"Base 100 = primeiro dia do período selecionado ({idx_at[0].strftime('%d/%m/%Y')}). "
-               f"Retornos em frequência mensal.")
+    st.caption(f"Rentabilidade acumulada a partir do início do período selecionado "
+               f"({idx_at[0].strftime('%d/%m/%Y')}) = 0%. Cada linha mostra o retorno "
+               f"percentual de cada ativo desde então. Frequência mensal.")
 
     st.divider()
 
