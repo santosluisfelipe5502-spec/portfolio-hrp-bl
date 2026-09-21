@@ -7073,32 +7073,41 @@ with tab16:
     corr_stress = ret_stress_df.corr()
     vol_stress = ret_stress_df.std() * np.sqrt(12)  # vol anualizada por ativo
 
-    # ── Presets rápidos (aplicados ANTES dos widgets) ─────────────────────────
-    # Guardamos os valores dos presets num dicionário separado no session_state.
-    # Os widgets leem esse dicionário como valor inicial. Isso evita o erro de
-    # tentar modificar um widget já instanciado.
-    if "stress_valores" not in st.session_state:
-        st.session_state["stress_valores"] = {c["name"]: 0.0 for c in ASSET_CFG}
+    # ── Presets rápidos via callback on_click ─────────────────────────────────
+    # Callbacks rodam ANTES dos widgets renderizarem, então podem escrever
+    # direto nas keys dos number_input sem o erro de widget já instanciado.
+    # Inicializar as keys dos widgets uma única vez.
+    for c in ASSET_CFG:
+        _k = f"stress_input_{c['key']}"
+        if _k not in st.session_state:
+            st.session_state[_k] = 0.0
+
+    def _set_preset(valores):
+        # Zera todos e aplica os valores do preset diretamente nas keys dos widgets
+        for c in ASSET_CFG:
+            st.session_state[f"stress_input_{c['key']}"] = 0.0
+        for nome_ativo, val in valores.items():
+            cfg_match = next((c for c in ASSET_CFG if c["name"] == nome_ativo), None)
+            if cfg_match:
+                st.session_state[f"stress_input_{cfg_match['key']}"] = float(val)
 
     st.markdown("**Cenários prontos** (clique para preencher os campos):")
     pc1, pc2, pc3, pc4, pc5 = st.columns(5)
-    def _aplicar_preset(valores):
-        base = {c["name"]: 0.0 for c in ASSET_CFG}
-        base.update(valores)
-        st.session_state["stress_valores"] = base
-        st.rerun()
-
-    if pc1.button("📉 Crash de bolsa", key="preset_crash"):
-        _aplicar_preset({"Ibovespa": -30.0, "Internac.": -20.0})
-    if pc2.button("❄️ Inverno cripto", key="preset_cripto"):
-        _aplicar_preset({"Bitcoin": -50.0})
-    if pc3.button("📈 Choque de juros", key="preset_juros"):
-        _aplicar_preset({"IDkA Pré 5A": -12.0, "IMA-B5+": -10.0})
-    if pc4.button("🔥 Crise sistêmica", key="preset_sistemica"):
-        _aplicar_preset({"Ibovespa": -35.0, "Internac.": -25.0,
-                         "Bitcoin": -60.0, "IDkA Pré 5A": -8.0})
-    if pc5.button("🧹 Limpar tudo", key="preset_limpar"):
-        _aplicar_preset({})
+    pc1.button("📉 Crash de bolsa", key="preset_crash",
+               on_click=_set_preset,
+               args=({"Ibovespa": -30.0, "Internac.": -20.0},))
+    pc2.button("❄️ Inverno cripto", key="preset_cripto",
+               on_click=_set_preset,
+               args=({"Bitcoin": -50.0},))
+    pc3.button("📈 Choque de juros", key="preset_juros",
+               on_click=_set_preset,
+               args=({"IDkA Pré 5A": -12.0, "IMA-B5+": -10.0},))
+    pc4.button("🔥 Crise sistêmica", key="preset_sistemica",
+               on_click=_set_preset,
+               args=({"Ibovespa": -35.0, "Internac.": -25.0,
+                      "Bitcoin": -60.0, "IDkA Pré 5A": -8.0},))
+    pc5.button("🧹 Limpar tudo", key="preset_limpar",
+               on_click=_set_preset, args=({},))
 
     # ── Campos de choque para cada ativo ──────────────────────────────────────
     st.markdown("#### 1. Defina o choque (%) para cada ativo")
@@ -7107,15 +7116,15 @@ with tab16:
     choques = {}
     n_cols = 5
     ativos_lista = list(ASSET_CFG)
-    _valores_preset = st.session_state.get("stress_valores", {})
     for linha_i in range(0, len(ativos_lista), n_cols):
         cols = st.columns(n_cols)
         for j, cfg in enumerate(ativos_lista[linha_i:linha_i+n_cols]):
             with cols[j]:
-                _val_inicial = _valores_preset.get(cfg["name"], 0.0)
+                # O widget usa sua key do session_state (setada pelos callbacks).
+                # Não passamos 'value' para não conflitar com a key.
                 choques[cfg["name"]] = st.number_input(
                     cfg["name"],
-                    min_value=-90.0, max_value=50.0, value=float(_val_inicial), step=5.0,
+                    min_value=-90.0, max_value=50.0, step=5.0,
                     key=f"stress_input_{cfg['key']}",
                     help=f"Queda/alta hipotética do {cfg['name']}"
                 )
