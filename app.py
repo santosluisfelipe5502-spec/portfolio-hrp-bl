@@ -7046,7 +7046,6 @@ with tab15:
 
 # ── Tab 16: Teste de estresse ─────────────────────────────────────────────────
 with tab16:
-    st.markdown("### 💥 Teste de estresse")
     st.markdown(
         "**Teste de estresse hipotético** — defina uma queda (choque) para cada ativo "
         "e veja o impacto imediato na carteira. Diferente dos Eventos de cauda (crises "
@@ -7074,6 +7073,33 @@ with tab16:
     corr_stress = ret_stress_df.corr()
     vol_stress = ret_stress_df.std() * np.sqrt(12)  # vol anualizada por ativo
 
+    # ── Presets rápidos (aplicados ANTES dos widgets) ─────────────────────────
+    # Guardamos os valores dos presets num dicionário separado no session_state.
+    # Os widgets leem esse dicionário como valor inicial. Isso evita o erro de
+    # tentar modificar um widget já instanciado.
+    if "stress_valores" not in st.session_state:
+        st.session_state["stress_valores"] = {c["name"]: 0.0 for c in ASSET_CFG}
+
+    st.markdown("**Cenários prontos** (clique para preencher os campos):")
+    pc1, pc2, pc3, pc4, pc5 = st.columns(5)
+    def _aplicar_preset(valores):
+        base = {c["name"]: 0.0 for c in ASSET_CFG}
+        base.update(valores)
+        st.session_state["stress_valores"] = base
+        st.rerun()
+
+    if pc1.button("📉 Crash de bolsa", key="preset_crash"):
+        _aplicar_preset({"Ibovespa": -30.0, "Internac.": -20.0})
+    if pc2.button("❄️ Inverno cripto", key="preset_cripto"):
+        _aplicar_preset({"Bitcoin": -50.0})
+    if pc3.button("📈 Choque de juros", key="preset_juros"):
+        _aplicar_preset({"IDkA Pré 5A": -12.0, "IMA-B5+": -10.0})
+    if pc4.button("🔥 Crise sistêmica", key="preset_sistemica"):
+        _aplicar_preset({"Ibovespa": -35.0, "Internac.": -25.0,
+                         "Bitcoin": -60.0, "IDkA Pré 5A": -8.0})
+    if pc5.button("🧹 Limpar tudo", key="preset_limpar"):
+        _aplicar_preset({})
+
     # ── Campos de choque para cada ativo ──────────────────────────────────────
     st.markdown("#### 1. Defina o choque (%) para cada ativo")
     st.caption("Valores negativos = queda. Deixe 0 nos ativos que não quer chocar.")
@@ -7081,37 +7107,18 @@ with tab16:
     choques = {}
     n_cols = 5
     ativos_lista = list(ASSET_CFG)
+    _valores_preset = st.session_state.get("stress_valores", {})
     for linha_i in range(0, len(ativos_lista), n_cols):
         cols = st.columns(n_cols)
         for j, cfg in enumerate(ativos_lista[linha_i:linha_i+n_cols]):
             with cols[j]:
+                _val_inicial = _valores_preset.get(cfg["name"], 0.0)
                 choques[cfg["name"]] = st.number_input(
                     cfg["name"],
-                    min_value=-90.0, max_value=50.0, value=0.0, step=5.0,
-                    key=f"stress_{cfg['key']}",
+                    min_value=-90.0, max_value=50.0, value=float(_val_inicial), step=5.0,
+                    key=f"stress_input_{cfg['key']}",
                     help=f"Queda/alta hipotética do {cfg['name']}"
                 )
-
-    # Presets rápidos
-    st.markdown("**Cenários prontos** (preenchem os campos acima ao clicar):")
-    pc1, pc2, pc3, pc4 = st.columns(4)
-    if pc1.button("📉 Crash de bolsa", key="preset_crash"):
-        st.session_state["stress_IBOV"] = -30.0
-        st.session_state["stress_INTL"] = -20.0
-        st.rerun()
-    if pc2.button("❄️ Inverno cripto", key="preset_cripto"):
-        st.session_state["stress_BTC"] = -50.0
-        st.rerun()
-    if pc3.button("📈 Choque de juros", key="preset_juros"):
-        st.session_state["stress_IDKAPRE5"] = -12.0
-        st.session_state["stress_IMAB5MAIS"] = -10.0
-        st.rerun()
-    if pc4.button("🔥 Crise sistêmica", key="preset_sistemica"):
-        st.session_state["stress_IBOV"] = -35.0
-        st.session_state["stress_INTL"] = -25.0
-        st.session_state["stress_BTC"] = -60.0
-        st.session_state["stress_IDKAPRE5"] = -8.0
-        st.rerun()
 
     st.divider()
 
