@@ -7095,23 +7095,74 @@ with tab16:
     pc1, pc2, pc3, pc4, pc5 = st.columns(5)
     pc1.button("📉 Crash de bolsa", key="preset_crash",
                on_click=_set_preset,
-               args=({"Ibovespa": -30.0, "Internac.": -20.0},))
+               args=({"Ibovespa": -30.0, "Internac.": -15.0,
+                      "Bitcoin": -35.0},))
     pc2.button("❄️ Inverno cripto", key="preset_cripto",
                on_click=_set_preset,
                args=({"Bitcoin": -50.0},))
     pc3.button("📈 Choque de juros", key="preset_juros",
                on_click=_set_preset,
-               args=({"IDkA Pré 5A": -12.0, "IMA-B5+": -10.0},))
+               args=({"IDkA Pré 5A": -12.0, "IDkA Pré 2A": -5.0,
+                      "IMA-B5": -6.0, "IMA-B5+": -12.0},))
     pc4.button("🔥 Crise sistêmica", key="preset_sistemica",
                on_click=_set_preset,
                args=({"Ibovespa": -35.0, "Internac.": -25.0,
-                      "Bitcoin": -60.0, "IDkA Pré 5A": -8.0},))
+                      "Bitcoin": -60.0, "IDkA Pré 5A": -10.0,
+                      "IDkA Pré 2A": -4.0, "IMA-B5": -5.0,
+                      "IMA-B5+": -12.0, "IHFA": -8.0,
+                      "IDA-DI": -3.0, "Ouro": 8.0},))
     pc5.button("🧹 Limpar tudo", key="preset_limpar",
                on_click=_set_preset, args=({},))
 
+    # ── Replicar eventos históricos REAIS ─────────────────────────────────────
+    st.markdown("**📊 Replicar evento histórico** (usa a queda REAL de cada ativo na crise):")
+
+    def _queda_real_evento(ev):
+        """Calcula quanto cada ativo caiu de fato durante um evento de cauda.
+        Retorna dict {nome_ativo: queda_%}. Ativos sem dados no período → 0."""
+        quedas = {}
+        try:
+            ev_s = pd.Timestamp(ev["start"])
+            ev_e = pd.Timestamp(ev["end"])
+            for cfg in ASSET_CFG:
+                s = series[cfg["name"]]["valor"].dropna()
+                # Valores no início e fim do evento
+                s_antes = s[s.index <= ev_s]
+                s_depois = s[s.index <= ev_e]
+                if len(s_antes) > 0 and len(s_depois) > 0 and s_antes.iloc[-1] != 0:
+                    # Só considera se o ativo já existia antes do evento
+                    if s.index[0] <= ev_s:
+                        ret = (s_depois.iloc[-1] / s_antes.iloc[-1] - 1) * 100
+                        quedas[cfg["name"]] = round(ret, 1)
+        except Exception:
+            pass
+        return quedas
+
+    # Botões dos eventos mais relevantes (com dados robustos)
+    eventos_replicaveis = [
+        ("🦠 COVID-19", "COVID-19"),
+        ("💥 Crise fiscal BR", "Crise fiscal BR"),
+        ("🏛️ Joesley Day", "Joesley Day"),
+        ("🌎 Tarifas Trump", "Tarifas Trump"),
+    ]
+    ev_cols = st.columns(len(eventos_replicaveis))
+    for i, (label, ev_nome) in enumerate(eventos_replicaveis):
+        ev_obj = next((e for e in TAIL_EVENTS if e["name"] == ev_nome), None)
+        if ev_obj is not None:
+            quedas_ev = _queda_real_evento(ev_obj)
+            ev_cols[i].button(label, key=f"preset_hist_{i}",
+                              on_click=_set_preset, args=(quedas_ev,),
+                              help=f"{ev_obj['start']} a {ev_obj['end']}: "
+                                   f"aplica a queda real de cada ativo.")
+
+    st.caption("Eventos históricos usam a variação real de cada ativo no período da crise "
+               "(fonte: séries do dashboard). Ativos que ainda não existiam na época ficam em 0.")
+
     # ── Campos de choque para cada ativo ──────────────────────────────────────
     st.markdown("#### 1. Defina o choque (%) para cada ativo")
-    st.caption("Valores negativos = queda. Deixe 0 nos ativos que não quer chocar.")
+    st.caption("Valores negativos = queda. Um ativo com campo **0 não fica ileso**: "
+               "ele ainda pode cair por **contágio** (veja a tabela de propagação abaixo). "
+               "Campo = choque que você impõe diretamente; contágio = efeito indireto via correlação.")
 
     choques = {}
     n_cols = 5
