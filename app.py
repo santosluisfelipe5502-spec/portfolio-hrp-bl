@@ -7046,6 +7046,7 @@ with tab15:
 
 # ── Tab 16: Teste de estresse ─────────────────────────────────────────────────
 with tab16:
+    st.markdown("### 💥 Teste de estresse")
     st.markdown(
         "**Teste de estresse hipotético** — defina uma queda (choque) para cada ativo "
         "e veja o impacto imediato na carteira. Diferente dos Eventos de cauda (crises "
