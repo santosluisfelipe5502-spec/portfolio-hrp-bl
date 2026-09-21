@@ -2095,7 +2095,7 @@ def gerar_pdf_cliente(dados):
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
 (tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7,
- tab10, tab11, tab12, tab14, tab15) = st.tabs([
+ tab10, tab11, tab12, tab14, tab15, tab16) = st.tabs([
     "📖 Guia",
     "📈 Retorno acumulado",
     "📉 Drawdown",
@@ -2109,6 +2109,7 @@ def gerar_pdf_cliente(dados):
     "📊 Atribuição de retorno",
     "📉📈 Ciclos de juros",
     "🎯 Markowitz",
+    "💥 Teste de estresse",
 ])
 
 # ── Tab 0: Guia ──────────────────────────────────────────────────────────────
@@ -7041,6 +7042,222 @@ with tab15:
                             )
                     except Exception as e:
                         st.error(f"Erro no teste out-of-sample: {e}")
+
+
+# ── Tab 16: Teste de estresse ─────────────────────────────────────────────────
+with tab16:
+    st.markdown(
+        "**Teste de estresse hipotético** — defina uma queda (choque) para cada ativo "
+        "e veja o impacto imediato na carteira. Diferente dos Eventos de cauda (crises "
+        "reais) e do Monte Carlo (aleatório), aqui **você controla** o cenário."
+    )
+
+    st.markdown(
+        "<div style='font-size:12px;padding:8px 12px;border-radius:6px;"
+        "background:#f8f7f4;border-left:3px solid #E24B4A;margin-bottom:1rem'>"
+        "💥 <strong>Dois cálculos:</strong> o <strong>impacto direto</strong> considera "
+        "apenas o ativo que você chocou (peso × queda). O <strong>impacto com contágio</strong> "
+        "usa as correlações históricas para propagar o choque aos demais ativos — mais realista, "
+        "pois numa crise os ativos correlacionados caem juntos."
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+    # ── Matriz de retornos e correlação ───────────────────────────────────────
+    ret_stress_dict = {}
+    for cfg in ASSET_CFG:
+        r = (series[cfg["name"]]["valor"].pct_change().dropna()
+             .reindex(common_idx).ffill().fillna(0))
+        ret_stress_dict[cfg["name"]] = r
+    ret_stress_df = pd.DataFrame(ret_stress_dict).dropna()
+    corr_stress = ret_stress_df.corr()
+    vol_stress = ret_stress_df.std() * np.sqrt(12)  # vol anualizada por ativo
+
+    # ── Campos de choque para cada ativo ──────────────────────────────────────
+    st.markdown("#### 1. Defina o choque (%) para cada ativo")
+    st.caption("Valores negativos = queda. Deixe 0 nos ativos que não quer chocar.")
+
+    choques = {}
+    n_cols = 5
+    ativos_lista = list(ASSET_CFG)
+    for linha_i in range(0, len(ativos_lista), n_cols):
+        cols = st.columns(n_cols)
+        for j, cfg in enumerate(ativos_lista[linha_i:linha_i+n_cols]):
+            with cols[j]:
+                choques[cfg["name"]] = st.number_input(
+                    cfg["name"],
+                    min_value=-90.0, max_value=50.0, value=0.0, step=5.0,
+                    key=f"stress_{cfg['key']}",
+                    help=f"Queda/alta hipotética do {cfg['name']}"
+                )
+
+    # Presets rápidos
+    st.markdown("**Cenários prontos** (preenchem os campos acima ao clicar):")
+    pc1, pc2, pc3, pc4 = st.columns(4)
+    if pc1.button("📉 Crash de bolsa", key="preset_crash"):
+        st.session_state["stress_IBOV"] = -30.0
+        st.session_state["stress_INTL"] = -20.0
+        st.rerun()
+    if pc2.button("❄️ Inverno cripto", key="preset_cripto"):
+        st.session_state["stress_BTC"] = -50.0
+        st.rerun()
+    if pc3.button("📈 Choque de juros", key="preset_juros"):
+        st.session_state["stress_IDKAPRE5"] = -12.0
+        st.session_state["stress_IMAB5MAIS"] = -10.0
+        st.rerun()
+    if pc4.button("🔥 Crise sistêmica", key="preset_sistemica"):
+        st.session_state["stress_IBOV"] = -35.0
+        st.session_state["stress_INTL"] = -25.0
+        st.session_state["stress_BTC"] = -60.0
+        st.session_state["stress_IDKAPRE5"] = -8.0
+        st.rerun()
+
+    st.divider()
+
+    # ── Verificar se há algum choque definido ─────────────────────────────────
+    tem_choque = any(v != 0 for v in choques.values())
+
+    if not tem_choque:
+        st.info("👆 Defina pelo menos um choque acima (ou use um cenário pronto) "
+                "para ver o impacto na carteira.")
+    else:
+        # ── Pesos dos 3 modelos ────────────────────────────────────────────────
+        modelos_stress = []
+        # HRP+BL
+        w_hrp_s = {c["name"]: WEIGHTS_ATIVO.get(c["name"], c["w"]) for c in ASSET_CFG}
+        tot = sum(w_hrp_s.values())
+        w_hrp_s = {k: v/tot for k, v in w_hrp_s.items()}
+        modelos_stress.append(("🔷 HRP+BL", w_hrp_s))
+        # Customizado
+        custom_w_s = {c["name"]: st.session_state.get(f"rebal_{c['name']}",
+                      c["w"]*100)/100 for c in ASSET_CFG}
+        if abs(sum(custom_w_s.values()) - 1.0) < 0.02:
+            modelos_stress.append(("🔶 Customizado", custom_w_s))
+        # Markowitz
+        if st.session_state.get("mk_composicao") is not None:
+            try:
+                w_mk_arr = markowitz_max_sharpe(ret_stress_df, rf_annual=rf_ann)
+                w_mk_s = {c["name"]: float(w_mk_arr[i]) for i, c in enumerate(ASSET_CFG)}
+                modelos_stress.append(("🟣 Markowitz", w_mk_s))
+            except Exception:
+                pass
+
+        # ── Função de cálculo do impacto ──────────────────────────────────────
+        def impacto_direto(pesos):
+            """Só os ativos chocados: soma(peso × choque)."""
+            return sum(pesos[c["name"]] * choques[c["name"]]/100 for c in ASSET_CFG) * 100
+
+        def impacto_contagio(pesos):
+            """Propaga o choque via correlação. Para cada ativo NÃO chocado,
+            estima a queda esperada dado o choque nos ativos chocados,
+            proporcional à correlação e à razão de volatilidades."""
+            choque_efetivo = {}
+            for c in ASSET_CFG:
+                nome = c["name"]
+                if choques[nome] != 0:
+                    # Ativo chocado diretamente: usa o choque definido
+                    choque_efetivo[nome] = choques[nome]/100
+                else:
+                    # Ativo não chocado: estima queda por contágio
+                    queda_contagio = 0.0
+                    for c2 in ASSET_CFG:
+                        nome2 = c2["name"]
+                        if choques[nome2] != 0 and nome2 != nome:
+                            rho = corr_stress.loc[nome, nome2]
+                            # Beta de contágio: rho × (vol_ativo / vol_chocado)
+                            vol_ratio = (vol_stress[nome] / vol_stress[nome2]
+                                         if vol_stress[nome2] > 0 else 0)
+                            queda_contagio += rho * vol_ratio * (choques[nome2]/100)
+                    choque_efetivo[nome] = queda_contagio
+            # Impacto total = soma(peso × choque_efetivo)
+            return sum(pesos[c["name"]] * choque_efetivo[c["name"]] for c in ASSET_CFG) * 100, choque_efetivo
+
+        # ── Resultados por modelo ─────────────────────────────────────────────
+        st.markdown("#### 2. Impacto na carteira")
+
+        cols_result = st.columns(len(modelos_stress))
+        for i, (nome_modelo, pesos) in enumerate(modelos_stress):
+            imp_dir = impacto_direto(pesos)
+            imp_cont, _ = impacto_contagio(pesos)
+            with cols_result[i]:
+                cor_m = "#E24B4A" if imp_cont < 0 else "#1D9E75"
+                st.markdown(
+                    f"<div style='padding:12px 16px;border-radius:8px;"
+                    f"background:{cor_m}12;border-left:4px solid {cor_m}'>"
+                    f"<div style='font-size:14px;font-weight:600;margin-bottom:8px'>"
+                    f"{nome_modelo}</div>"
+                    f"<div style='font-size:11px;color:#888780'>Impacto direto</div>"
+                    f"<div style='font-size:22px;font-weight:700;color:{cor_m}'>"
+                    f"{imp_dir:+.2f}%</div>"
+                    f"<div style='font-size:11px;color:#888780;margin-top:6px'>"
+                    f"Com contágio</div>"
+                    f"<div style='font-size:22px;font-weight:700;color:{cor_m}'>"
+                    f"{imp_cont:+.2f}%</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+        # ── Detalhamento do contágio (HRP+BL) ─────────────────────────────────
+        st.markdown("#### 3. Como o choque se propaga (HRP+BL)")
+        _, choque_ef_hrp = impacto_contagio(w_hrp_s)
+
+        rows_stress = []
+        for cfg in ASSET_CFG:
+            nome = cfg["name"]
+            choque_direto = choques[nome]
+            choque_total = choque_ef_hrp[nome] * 100
+            contagio_extra = choque_total - choque_direto
+            peso = w_hrp_s[nome] * 100
+            contrib_perda = peso/100 * choque_total
+            rows_stress.append({
+                "Ativo": nome,
+                "Peso": f"{peso:.1f}%",
+                "Choque definido": f"{choque_direto:+.1f}%" if choque_direto != 0 else "—",
+                "Contágio": f"{contagio_extra:+.1f}%" if abs(contagio_extra) > 0.05 else "—",
+                "Queda total": f"{choque_total:+.1f}%" if abs(choque_total) > 0.05 else "—",
+                "Impacto na carteira": f"{contrib_perda:+.2f}%",
+            })
+        df_stress = pd.DataFrame(rows_stress).set_index("Ativo")
+        st.dataframe(df_stress, use_container_width=True)
+
+        # ── Insight automático ────────────────────────────────────────────────
+        imp_dir_hrp = impacto_direto(w_hrp_s)
+        imp_cont_hrp, _ = impacto_contagio(w_hrp_s)
+        amplificacao = imp_cont_hrp - imp_dir_hrp
+
+        if abs(amplificacao) > 0.3:
+            st.warning(
+                f"⚠️ O **contágio amplia a perda** em {abs(amplificacao):.2f} pontos "
+                f"percentuais (de {imp_dir_hrp:+.2f}% direto para {imp_cont_hrp:+.2f}% "
+                f"com contágio). Isso mostra que numa crise real os ativos correlacionados "
+                f"caem juntos — a perda é maior do que a soma dos choques isolados sugere."
+            )
+        else:
+            st.success(
+                f"✅ O contágio tem impacto pequeno ({amplificacao:+.2f} p.p.) neste cenário. "
+                f"Os ativos chocados têm baixa correlação com o resto da carteira, então a "
+                f"perda fica contida — sinal de boa diversificação."
+            )
+
+        # Comparação entre modelos
+        if len(modelos_stress) > 1:
+            resultados = [(nome, impacto_contagio(pesos)[0]) for nome, pesos in modelos_stress]
+            mais_resiliente = max(resultados, key=lambda x: x[1])
+            menos_resiliente = min(resultados, key=lambda x: x[1])
+            if mais_resiliente[0] != menos_resiliente[0]:
+                st.info(
+                    f"📊 Neste cenário de estresse, o **{mais_resiliente[0]}** foi o mais "
+                    f"resiliente ({mais_resiliente[1]:+.2f}%) e o **{menos_resiliente[0]}** "
+                    f"o mais exposto ({menos_resiliente[1]:+.2f}%). Diferença de "
+                    f"**{abs(mais_resiliente[1]-menos_resiliente[1]):.2f} p.p.**"
+                )
+
+        st.caption(
+            "Impacto direto = soma(peso × choque) apenas dos ativos chocados. "
+            "Contágio = propaga o choque aos demais via correlação histórica "
+            "(ρ × razão de volatilidades). É uma estimativa de primeira ordem — "
+            "crises reais podem ter correlações ainda mais altas ('tudo cai junto')."
+        )
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
