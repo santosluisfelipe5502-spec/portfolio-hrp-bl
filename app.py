@@ -7354,6 +7354,11 @@ with tab17:
                    f"maiores são mais suaves.")
 
     if st.button("▶ Calcular estabilidade", key="btn_estab", type="primary"):
+        st.session_state["estab_rodar"] = True
+
+    # Executa fora do if para persistir o resultado após interações
+    if st.session_state.get("estab_rodar"):
+      try:
         # Montar matriz de retornos
         ret_est_dict = {}
         for cfg in ASSET_CFG:
@@ -7524,6 +7529,10 @@ with tab17:
                 "ao longo do tempo. O Customizado tem pesos fixos (turnover zero) por definição, "
                 "mas não se adapta a mudanças de mercado."
             )
+      except Exception as _e_estab:
+        st.error(f"Erro ao calcular estabilidade: {_e_estab}")
+        import traceback
+        st.code(traceback.format_exc())
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
