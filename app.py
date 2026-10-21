@@ -2095,7 +2095,7 @@ def gerar_pdf_cliente(dados):
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
 (tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7,
- tab10, tab11, tab12, tab14, tab15, tab16) = st.tabs([
+ tab10, tab11, tab12, tab14, tab15, tab16, tab17) = st.tabs([
     "📖 Guia",
     "📈 Retorno acumulado",
     "📉 Drawdown",
@@ -2110,6 +2110,7 @@ def gerar_pdf_cliente(dados):
     "📉📈 Ciclos de juros",
     "🎯 Markowitz",
     "💥 Teste de estresse",
+    "📊 Estabilidade dos pesos",
 ])
 
 # ── Tab 0: Guia ──────────────────────────────────────────────────────────────
@@ -7326,6 +7327,203 @@ with tab16:
             "(ρ × razão de volatilidades). É uma estimativa de primeira ordem — "
             "crises reais podem ter correlações ainda mais altas ('tudo cai junto')."
         )
+
+
+# ── Tab 17: Estabilidade dos pesos ────────────────────────────────────────────
+with tab17:
+    st.markdown(
+        "**Estabilidade dos pesos** — recalcula cada modelo em janelas deslizantes ao "
+        "longo do tempo e mede quanto os pesos oscilam. Um modelo **estável** (pesos que "
+        "pouco mudam) é mais robusto, gera menos custos de rebalanceamento e é mais "
+        "confiável na prática. Esta é uma das principais vantagens teóricas do HRP."
+    )
+
+    # ── Controles ─────────────────────────────────────────────────────────────
+    col_est1, col_est2 = st.columns([1, 2])
+    with col_est1:
+        janela_est = st.slider(
+            "Janela de recálculo (meses)",
+            24, 60, 36, 6,
+            key="estab_janela",
+            help="Tamanho da janela histórica usada para calcular os pesos em cada ponto."
+        )
+    with col_est2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.caption(f"O modelo é recalculado a cada mês usando os {janela_est} meses "
+                   f"anteriores. Janelas menores reagem mais rápido mas são mais instáveis; "
+                   f"maiores são mais suaves.")
+
+    if st.button("▶ Calcular estabilidade", key="btn_estab", type="primary"):
+        # Montar matriz de retornos
+        ret_est_dict = {}
+        for cfg in ASSET_CFG:
+            r = (series[cfg["name"]]["valor"].pct_change().dropna()
+                 .reindex(common_idx).ffill().fillna(0))
+            ret_est_dict[cfg["name"]] = r
+        ret_est_df = pd.DataFrame(ret_est_dict).dropna()
+
+        n_total = len(ret_est_df)
+        if n_total < janela_est + 6:
+            st.warning(f"Histórico insuficiente para janela de {janela_est} meses. "
+                       f"Reduza a janela ou aguarde mais dados.")
+        else:
+            with st.spinner("Recalculando modelos em cada ponto do tempo..."):
+                # Pesos customizados fixos (não mudam, servem de referência)
+                custom_w_est = {c["name"]: st.session_state.get(f"rebal_{c['name']}",
+                                c["w"]*100)/100 for c in ASSET_CFG}
+                tem_custom_est = abs(sum(custom_w_est.values()) - 1.0) < 0.02
+
+                datas_recalc = []
+                pesos_hrp_hist = {c["name"]: [] for c in ASSET_CFG}
+                pesos_mk_hist  = {c["name"]: [] for c in ASSET_CFG}
+
+                # Janela deslizante: do ponto (janela) até o fim, passo de 1 mês
+                passo = max(1, (n_total - janela_est) // 60)  # no máx ~60 pontos
+                for t in range(janela_est, n_total, passo):
+                    janela_dados = ret_est_df.iloc[t-janela_est:t]
+                    datas_recalc.append(ret_est_df.index[t])
+
+                    # HRP nesta janela
+                    try:
+                        w_hrp = compute_hrp(janela_dados)
+                        for c in ASSET_CFG:
+                            pesos_hrp_hist[c["name"]].append(float(w_hrp.get(c["name"], 0))*100)
+                    except Exception:
+                        for c in ASSET_CFG:
+                            pesos_hrp_hist[c["name"]].append(np.nan)
+
+                    # Markowitz nesta janela
+                    try:
+                        w_mk = markowitz_max_sharpe(janela_dados, rf_annual=rf_ann)
+                        for i, c in enumerate(ASSET_CFG):
+                            pesos_mk_hist[c["name"]].append(float(w_mk[i])*100)
+                    except Exception:
+                        for c in ASSET_CFG:
+                            pesos_mk_hist[c["name"]].append(np.nan)
+
+            # ── Gráficos de evolução dos pesos ─────────────────────────────────
+            st.markdown("#### Evolução dos pesos ao longo do tempo")
+            st.caption("Linhas quase retas = modelo estável. Linhas que serpenteiam = instável.")
+
+            col_g1, col_g2 = st.columns(2)
+
+            # HRP
+            with col_g1:
+                st.markdown("**🔷 HRP+BL**")
+                fig_hrp = go.Figure()
+                for c in ASSET_CFG:
+                    fig_hrp.add_trace(go.Scatter(
+                        x=datas_recalc, y=pesos_hrp_hist[c["name"]],
+                        name=c["name"], line=dict(color=c["color"], width=1.5),
+                        stackgroup="one",
+                        hovertemplate=f"{c['name']}<br>%{{x|%b/%Y}}<br>%{{y:.1f}}%%<extra></extra>"))
+                fig_hrp.update_layout(
+                    plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                    height=360, font=dict(color="#1a1a18"),
+                    margin=dict(l=0, r=0, t=8, b=0),
+                    legend=dict(font=dict(size=8), orientation="h", y=-0.15),
+                    xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=9), color="#1a1a18"),
+                    yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                               tickfont=dict(color="#444441", size=9), color="#1a1a18"),
+                )
+                st.plotly_chart(fig_hrp, use_container_width=True)
+
+            # Markowitz
+            with col_g2:
+                st.markdown("**🟣 Markowitz**")
+                fig_mk = go.Figure()
+                for c in ASSET_CFG:
+                    fig_mk.add_trace(go.Scatter(
+                        x=datas_recalc, y=pesos_mk_hist[c["name"]],
+                        name=c["name"], line=dict(color=c["color"], width=1.5),
+                        stackgroup="one",
+                        hovertemplate=f"{c['name']}<br>%{{x|%b/%Y}}<br>%{{y:.1f}}%%<extra></extra>"))
+                fig_mk.update_layout(
+                    plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                    height=360, font=dict(color="#1a1a18"),
+                    margin=dict(l=0, r=0, t=8, b=0),
+                    legend=dict(font=dict(size=8), orientation="h", y=-0.15),
+                    xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=9), color="#1a1a18"),
+                    yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
+                               tickfont=dict(color="#444441", size=9), color="#1a1a18"),
+                )
+                st.plotly_chart(fig_mk, use_container_width=True)
+
+            # ── Tabela de estabilidade (desvio-padrão de cada peso) ────────────
+            st.markdown("#### Estabilidade por ativo — quanto o peso oscilou")
+
+            rows_est = []
+            for c in ASSET_CFG:
+                hrp_vals = pd.Series(pesos_hrp_hist[c["name"]]).dropna()
+                mk_vals  = pd.Series(pesos_mk_hist[c["name"]]).dropna()
+                linha = {
+                    "Ativo": c["name"],
+                    "HRP médio":  f"{hrp_vals.mean():.1f}%" if len(hrp_vals) else "—",
+                    "HRP desvio": f"±{hrp_vals.std():.1f}%" if len(hrp_vals) else "—",
+                    "Markowitz médio":  f"{mk_vals.mean():.1f}%" if len(mk_vals) else "—",
+                    "Markowitz desvio": f"±{mk_vals.std():.1f}%" if len(mk_vals) else "—",
+                    "Customizado": f"{custom_w_est[c['name']]*100:.1f}% (fixo)" if tem_custom_est else "—",
+                }
+                rows_est.append(linha)
+            df_est = pd.DataFrame(rows_est).set_index("Ativo")
+            st.dataframe(df_est, use_container_width=True)
+
+            # ── Turnover médio (quanto muda a cada recálculo) ──────────────────
+            st.markdown("#### Turnover — quanto você rebalancearia a cada recálculo")
+
+            def turnover_medio(pesos_hist):
+                """Média da soma das variações absolutas de peso entre recálculos."""
+                nomes = list(pesos_hist.keys())
+                matriz = np.array([pesos_hist[n] for n in nomes])  # ativos × tempo
+                if matriz.shape[1] < 2:
+                    return 0
+                # Variação absoluta entre períodos consecutivos, somada por ativo
+                difs = np.abs(np.diff(matriz, axis=1))
+                turnover_por_periodo = np.nansum(difs, axis=0) / 2  # /2 pois compra+venda
+                return np.nanmean(turnover_por_periodo)
+
+            to_hrp = turnover_medio(pesos_hrp_hist)
+            to_mk  = turnover_medio(pesos_mk_hist)
+
+            col_t1, col_t2 = st.columns(2)
+            col_t1.markdown(
+                f"<div style='padding:12px 16px;border-radius:8px;background:#378ADD15;"
+                f"border-left:4px solid #378ADD;text-align:center'>"
+                f"<span style='font-size:12px;color:#888780'>🔷 HRP+BL</span><br>"
+                f"<span style='font-size:26px;font-weight:700;color:#378ADD'>{to_hrp:.1f}%</span><br>"
+                f"<span style='font-size:11px;color:#888780'>turnover médio por recálculo</span></div>",
+                unsafe_allow_html=True)
+            col_t2.markdown(
+                f"<div style='padding:12px 16px;border-radius:8px;background:#7F77DD15;"
+                f"border-left:4px solid #7F77DD;text-align:center'>"
+                f"<span style='font-size:12px;color:#888780'>🟣 Markowitz</span><br>"
+                f"<span style='font-size:26px;font-weight:700;color:#7F77DD'>{to_mk:.1f}%</span><br>"
+                f"<span style='font-size:11px;color:#888780'>turnover médio por recálculo</span></div>",
+                unsafe_allow_html=True)
+
+            # ── Veredito ───────────────────────────────────────────────────────
+            if to_hrp < to_mk:
+                reducao = (1 - to_hrp/to_mk)*100 if to_mk > 0 else 0
+                st.success(
+                    f"✅ **O HRP é mais estável!** Turnover de {to_hrp:.1f}% vs {to_mk:.1f}% "
+                    f"do Markowitz — **{reducao:.0f}% menos rebalanceamento**. Na prática, "
+                    f"isso significa menos operações, menos custos de corretagem e impostos, "
+                    f"e uma carteira que não precisa ser 'remexida' a cada novo dado. É a "
+                    f"vantagem prática do HRP que a teoria prevê."
+                )
+            else:
+                st.info(
+                    f"📊 Neste recorte, o turnover do HRP ({to_hrp:.1f}%) ficou próximo ou "
+                    f"acima do Markowitz ({to_mk:.1f}%). Teste outras janelas — o HRP "
+                    f"costuma ser mais estável na maioria dos períodos."
+                )
+
+            st.caption(
+                "Turnover = metade da soma das mudanças de peso entre recálculos consecutivos "
+                "(representa quanto você compra/vende). Desvio = oscilação do peso de cada ativo "
+                "ao longo do tempo. O Customizado tem pesos fixos (turnover zero) por definição, "
+                "mas não se adapta a mudanças de mercado."
+            )
 
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
