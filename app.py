@@ -526,6 +526,52 @@ def fetch_yfinance(ticker, start="2002-01-01"):
     except Exception:
         return None
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_fatores_macro():
+    """Busca os fatores macro para a análise econométrica.
+    Retorna um DataFrame mensal com os NÍVEIS de cada fator.
+    Fontes: Yahoo Finance (globais) e BCB (Brasil).
+    """
+    fatores = {}
+
+    # ── Globais via Yahoo Finance ─────────────────────────────────────────────
+    _yf_tickers = {
+        "Petróleo (WTI)": "CL=F",
+        "VIX (medo)":     "^VIX",
+        "Juro EUA 10a":   "^TNX",
+        "Commodities":    "^SPGSCI",
+        "Dólar (DXY)":    "DX-Y.NYB",
+    }
+    for nome, ticker in _yf_tickers.items():
+        try:
+            d = fetch_yfinance(ticker, start="2008-01-01")
+            if d is not None and len(d) > 24:
+                fatores[nome] = d["valor"]
+        except Exception:
+            pass
+
+    # ── Brasil via BCB ────────────────────────────────────────────────────────
+    _bcb_series = {
+        "IPCA (infl.)":  (433, 1.0),      # IPCA mensal %
+        "IGP-M (infl.)": (189, 1.0),      # IGP-M mensal %
+        "Selic":         (432, 1.0),      # Selic meta % a.a.
+        "PIB mensal":    (4380, 1.0),     # Proxy PIB mensal (índice)
+    }
+    for nome, (sid, div) in _bcb_series.items():
+        try:
+            d = fetch_bcb_serie(sid, divisor=div)
+            if d is not None and len(d) > 24:
+                s = d["valor"].copy()
+                s.index = pd.to_datetime(s.index) + pd.offsets.MonthEnd(0)
+                fatores[nome] = s
+        except Exception:
+            pass
+
+    if not fatores:
+        return None
+    df_fat = pd.DataFrame(fatores)
+    return df_fat
+
 def read_uploaded(file):
     """Lê XLS/XLSX/CSV em DataFrame com duas colunas: data, valor.
     Suporta formato ANBIMA (código, data, valor), Investing.com (Data, Último, ...)
@@ -2097,7 +2143,7 @@ def gerar_pdf_cliente(dados):
 
 # ── Tabs principais ─────────────────────────────────────────────────────────
 (tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7,
- tab10, tab11, tab12, tab14, tab15, tab16, tab17) = st.tabs([
+ tab10, tab11, tab12, tab14, tab15, tab16, tab17, tab18) = st.tabs([
     "📖 Guia",
     "📈 Retorno acumulado",
     "📉 Drawdown",
@@ -2113,6 +2159,7 @@ def gerar_pdf_cliente(dados):
     "🎯 Markowitz",
     "💥 Teste de estresse",
     "📊 Estabilidade dos pesos",
+    "🔬 Análise macro",
 ])
 
 # ── Tab 0: Guia ──────────────────────────────────────────────────────────────
@@ -7548,6 +7595,252 @@ with tab17:
             )
       except Exception as _e_estab:
         st.error(f"Erro ao calcular estabilidade: {_e_estab}")
+        import traceback
+        st.code(traceback.format_exc())
+
+
+# ── Tab 18: Análise macro ─────────────────────────────────────────────────────
+with tab18:
+    st.markdown(
+        "**Análise macroeconômica** — como as carteiras reagem a fatores macro globais e "
+        "domésticos. Mede sensibilidade (correlação e beta), como ela muda no tempo, e o "
+        "comportamento em diferentes regimes macro."
+    )
+    st.markdown(
+        "<div style='font-size:12px;padding:8px 12px;border-radius:6px;"
+        "background:#f8f7f4;border-left:3px solid #C4770A;margin-bottom:1rem'>"
+        "⚠️ <strong>Leitura cuidadosa:</strong> correlação <strong>não é</strong> causalidade. "
+        "Que o portfólio se mova junto com um fator não significa que o fator o cause. "
+        "Além disso, essas relações <strong>mudam ao longo do tempo</strong> — use como mapa "
+        "de exposições, não como regra de previsão."
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+    if st.button("▶ Rodar análise macro", key="btn_macro", type="primary"):
+        st.session_state["macro_rodar"] = True
+
+    if st.session_state.get("macro_rodar"):
+      try:
+        with st.spinner("Buscando fatores macro (Yahoo Finance + BCB)..."):
+            df_fatores = fetch_fatores_macro()
+
+        if df_fatores is None or df_fatores.empty:
+            st.error("Não foi possível buscar os fatores macro. Tente novamente em instantes.")
+        else:
+            # ── Preparar retornos das carteiras ───────────────────────────────
+            ret_macro_dict = {}
+            for cfg in ASSET_CFG:
+                r = (series[cfg["name"]]["valor"].pct_change().dropna()
+                     .reindex(common_idx).ffill().fillna(0))
+                ret_macro_dict[cfg["name"]] = r
+            ret_macro_df = pd.DataFrame(ret_macro_dict).dropna()
+
+            # HRP
+            ret_hrp_macro = port_ret.copy()
+            # Customizado
+            custom_w_macro = {c["name"]: st.session_state.get(f"rebal_{c['name']}",
+                              c["w"]*100)/100 for c in ASSET_CFG}
+            tem_custom_macro = abs(sum(custom_w_macro.values()) - 1.0) < 0.02
+            ret_cust_macro = (sum(custom_w_macro[a["name"]] * ret_macro_dict[a["name"]]
+                             for a in ASSET_CFG) if tem_custom_macro else None)
+            # Markowitz
+            ret_mk_macro = None
+            try:
+                w_mk_m = markowitz_max_sharpe(ret_macro_df, rf_annual=rf_ann)
+                ret_mk_macro = sum(float(w_mk_m[i]) * ret_macro_dict[c["name"]]
+                                   for i, c in enumerate(ASSET_CFG))
+            except Exception:
+                pass
+
+            # Transformar fatores em VARIAÇÕES (retornos ou diferenças)
+            # Preços (Yahoo) → retorno %; taxas (inflação, selic) → diferença
+            fatores_var = {}
+            for col in df_fatores.columns:
+                serie = df_fatores[col].dropna()
+                if any(k in col for k in ["infl", "Selic", "Juro"]):
+                    # Taxa → usar a variação em p.p.
+                    fatores_var[col] = serie.diff()
+                else:
+                    # Preço/índice → usar retorno %
+                    fatores_var[col] = serie.pct_change() * 100
+            df_fat_var = pd.DataFrame(fatores_var).dropna()
+
+            # Alinhar carteiras e fatores no mesmo índice mensal
+            carteiras = {"HRP+BL": ret_hrp_macro}
+            if ret_cust_macro is not None:
+                carteiras["Customizado"] = ret_cust_macro
+            if ret_mk_macro is not None:
+                carteiras["Markowitz"] = ret_mk_macro
+
+            # ── 1. MATRIZ DE SENSIBILIDADE (correlação) ───────────────────────
+            st.markdown("#### 1. Sensibilidade a fatores macro (correlação)")
+            st.caption("Correlação entre o retorno mensal de cada carteira e a variação de "
+                       "cada fator. Azul = movem juntos; vermelho = movem opostos.")
+
+            corr_rows = []
+            nomes_cart = list(carteiras.keys())
+            for fator in df_fat_var.columns:
+                linha = {"Fator": fator}
+                for nome_c, ret_c in carteiras.items():
+                    idx_comum = ret_c.index.intersection(df_fat_var.index)
+                    if len(idx_comum) > 24:
+                        c = ret_c.reindex(idx_comum).corr(df_fat_var[fator].reindex(idx_comum))
+                        linha[nome_c] = c if not pd.isna(c) else 0.0
+                    else:
+                        linha[nome_c] = 0.0
+                corr_rows.append(linha)
+            df_corr_macro = pd.DataFrame(corr_rows).set_index("Fator")
+
+            # Heatmap
+            fig_macro = go.Figure(go.Heatmap(
+                z=df_corr_macro.values,
+                x=list(df_corr_macro.columns),
+                y=list(df_corr_macro.index),
+                zmin=-0.6, zmax=0.6, zmid=0,
+                colorscale=[[0,"#B22222"],[0.5,"#FFFFFF"],[1,"#1a3a5c"]],
+                text=df_corr_macro.round(2).values,
+                texttemplate="%{text}",
+                textfont=dict(size=11),
+                colorbar=dict(title="Corr.", tickfont=dict(color="#444441", size=9), thickness=12),
+                hovertemplate="%{y} × %{x}<br>Correlação: %{z:.2f}<extra></extra>",
+            ))
+            fig_macro.update_layout(
+                plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                height=max(300, len(df_corr_macro)*44+60),
+                font=dict(color="#1a1a18"),
+                margin=dict(l=0, r=0, t=8, b=0),
+                xaxis=dict(side="top", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+                yaxis=dict(autorange="reversed", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
+            )
+            st.plotly_chart(fig_macro, use_container_width=True)
+
+            # Insight: maior exposição do HRP
+            if "HRP+BL" in df_corr_macro.columns:
+                hrp_corr = df_corr_macro["HRP+BL"].abs().sort_values(ascending=False)
+                top_fator = hrp_corr.index[0]
+                top_val = df_corr_macro.loc[top_fator, "HRP+BL"]
+                st.info(
+                    f"📊 O **HRP+BL** tem maior sensibilidade a **{top_fator}** "
+                    f"(correlação {top_val:+.2f}). "
+                    f"{'Move-se junto' if top_val > 0 else 'Move-se oposto'} a esse fator. "
+                    f"Fatores com correlação perto de zero têm pouca influência sobre a carteira."
+                )
+
+            # ── 2. BETA (regressão) ───────────────────────────────────────────
+            st.markdown("#### 2. Beta — impacto de cada fator")
+            st.caption("Quanto a carteira rende para cada +1 unidade de variação no fator "
+                       "(regressão linear). Winsorizado para resistir a meses atípicos.")
+
+            beta_rows = []
+            for fator in df_fat_var.columns:
+                linha = {"Fator": fator}
+                for nome_c, ret_c in carteiras.items():
+                    idx_comum = ret_c.index.intersection(df_fat_var.index)
+                    if len(idx_comum) > 24:
+                        x = df_fat_var[fator].reindex(idx_comum).values
+                        y = (ret_c.reindex(idx_comum)*100).values
+                        # Winsorizar y (remover 5% extremos)
+                        p_lo, p_hi = np.percentile(y, [5, 95])
+                        mask = (y >= p_lo) & (y <= p_hi)
+                        xw, yw = x[mask], y[mask]
+                        if len(xw) > 12 and np.var(xw) > 1e-9:
+                            beta = np.cov(xw, yw)[0,1] / np.var(xw)
+                            linha[nome_c] = f"{beta:+.3f}"
+                        else:
+                            linha[nome_c] = "—"
+                    else:
+                        linha[nome_c] = "—"
+                beta_rows.append(linha)
+            df_beta_macro = pd.DataFrame(beta_rows).set_index("Fator")
+            st.dataframe(df_beta_macro, use_container_width=True)
+            st.caption("Beta positivo = carteira sobe quando o fator sobe. "
+                       "Para inflação/juros, o fator é a variação em p.p.; para "
+                       "petróleo/VIX/dólar, é o retorno % do fator.")
+
+            # ── 3. CORRELAÇÃO DINÂMICA (janela móvel) ─────────────────────────
+            st.markdown("#### 3. Correlação dinâmica — como a sensibilidade muda no tempo")
+            fator_din = st.selectbox(
+                "Fator para ver a evolução da correlação com o HRP+BL",
+                list(df_fat_var.columns), key="macro_fator_din"
+            )
+            janela_corr = 24  # meses
+            idx_comum = ret_hrp_macro.index.intersection(df_fat_var.index)
+            x_din = df_fat_var[fator_din].reindex(idx_comum)
+            y_din = ret_hrp_macro.reindex(idx_comum)
+            corr_movel = y_din.rolling(janela_corr).corr(x_din).dropna()
+
+            if len(corr_movel) > 6:
+                fig_din = go.Figure()
+                fig_din.add_trace(go.Scatter(
+                    x=corr_movel.index, y=corr_movel.values.round(2),
+                    name=f"Corr. HRP × {fator_din}",
+                    line=dict(color="#378ADD", width=2), fill="tozeroy",
+                    fillcolor="rgba(55,138,221,0.1)"))
+                # Marcar eventos de cauda
+                for ev in TAIL_EVENTS:
+                    try:
+                        ev_m = pd.Timestamp(ev["start"]) + (pd.Timestamp(ev["end"]) - pd.Timestamp(ev["start"]))/2
+                        if corr_movel.index[0] <= ev_m <= corr_movel.index[-1]:
+                            fig_din.add_vline(x=ev_m, line_color="rgba(226,75,74,0.3)",
+                                              line_width=1, line_dash="dot")
+                    except Exception:
+                        pass
+                fig_din.add_hline(y=0, line_color="#888780", line_width=1)
+                fig_din.update_layout(
+                    plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                    height=300, font=dict(color="#1a1a18"),
+                    margin=dict(l=0, r=0, t=8, b=0),
+                    xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441"), color="#1a1a18"),
+                    yaxis=dict(title=f"Correlação móvel ({janela_corr}m)", range=[-1,1],
+                               gridcolor="#e8e6e0", tickfont=dict(color="#444441"), color="#1a1a18"),
+                )
+                st.plotly_chart(fig_din, use_container_width=True)
+                st.caption(f"Correlação móvel de {janela_corr} meses entre o HRP+BL e {fator_din}. "
+                           f"Linhas vermelhas pontilhadas = eventos de cauda. "
+                           f"Quando a linha sobe/desce muito, a relação mudou — prova de que "
+                           f"uma correlação 'média' única esconde a dinâmica real.")
+
+            # ── 4. COMPORTAMENTO POR REGIME MACRO ─────────────────────────────
+            st.markdown("#### 4. Comportamento por regime macro")
+            fator_reg = st.selectbox(
+                "Fator para definir os regimes",
+                list(df_fat_var.columns), key="macro_fator_reg"
+            )
+            # Dividir em regimes: fator subindo vs caindo (vs mediana da variação)
+            serie_fator = df_fat_var[fator_reg].dropna()
+            mediana_var = serie_fator.median()
+            meses_alta = serie_fator[serie_fator > mediana_var].index
+            meses_baixa = serie_fator[serie_fator <= mediana_var].index
+
+            reg_rows = []
+            for nome_c, ret_c in carteiras.items():
+                r_alta = ret_c.reindex(meses_alta).dropna()
+                r_baixa = ret_c.reindex(meses_baixa).dropna()
+                reg_rows.append({
+                    "Carteira": nome_c,
+                    f"{fator_reg} ALTA (ret. médio a.a.)":
+                        f"{((1+r_alta.mean())**12-1)*100:+.1f}%" if len(r_alta) else "—",
+                    f"{fator_reg} BAIXA (ret. médio a.a.)":
+                        f"{((1+r_baixa.mean())**12-1)*100:+.1f}%" if len(r_baixa) else "—",
+                    "Vol ALTA": f"{r_alta.std()*np.sqrt(12)*100:.1f}%" if len(r_alta) else "—",
+                    "Vol BAIXA": f"{r_baixa.std()*np.sqrt(12)*100:.1f}%" if len(r_baixa) else "—",
+                })
+            df_reg_macro = pd.DataFrame(reg_rows).set_index("Carteira")
+            st.dataframe(df_reg_macro, use_container_width=True)
+            st.caption(f"Comportamento das carteiras quando {fator_reg} está acima (ALTA) vs "
+                       f"abaixo (BAIXA) da sua variação mediana. Mostra em qual ambiente macro "
+                       f"cada carteira performa melhor.")
+
+            st.divider()
+            st.caption(
+                "Fatores: Petróleo WTI, VIX, Juro EUA 10a, Commodities (S&P GSCI), Dólar DXY "
+                "(Yahoo Finance); IPCA, IGP-M, Selic, PIB mensal (BCB). "
+                "Metodologia: correlação e beta winsorizado sobre retornos mensais. "
+                "As relações são descritivas (não causais) e variam no tempo."
+            )
+      except Exception as _e_macro:
+        st.error(f"Erro na análise macro: {_e_macro}")
         import traceback
         st.code(traceback.format_exc())
 
