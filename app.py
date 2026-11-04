@@ -2400,11 +2400,21 @@ seus próprios dados.*
                 unsafe_allow_html=True
             )
 
-    # ── Seção 5: Rotina de atualização ────────────────────────────────────────
-    with st.expander("🔄 Rotina de atualização mensal", expanded=False):
-        col_r1, col_r2 = st.columns(2)
-        with col_r1:
-            st.markdown("""
+    # ── Seção 5: Rotina de atualização (RESTRITA AO ADMIN) ────────────────────
+    with st.expander("🔒 Rotina de atualização (admin)", expanded=False):
+        st.caption("Área restrita ao administrador do dashboard. "
+                   "Digite a senha para ver as instruções de manutenção das bases.")
+        _senha_admin_guia = st.text_input(
+            "Senha de administrador",
+            type="password",
+            key="senha_admin_rotina",
+            placeholder="Digite a senha para acessar"
+        )
+        SENHA_ADMIN = "TcgQeCqhysjL"
+        if _senha_admin_guia == SENHA_ADMIN:
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
+                st.markdown("""
 **✅ Automático — não precisa fazer nada**
 - CDI mensal — API Banco Central (SGS 4391)
 - PTAX (câmbio) — API Banco Central (SGS 3698)
@@ -2412,23 +2422,28 @@ seus próprios dados.*
 - Ibovespa — Yahoo Finance (^BVSP)
 - SPY — Yahoo Finance
 - TLT — Yahoo Finance
-            """)
-        with col_r2:
-            st.markdown("""
+                """)
+            with col_r2:
+                st.markdown("""
 **📂 Manual — uma vez por mês**
 1. Baixar os 4 índices da ANBIMA:
    [anbima.com.br/indices](https://www.anbima.com.br/pt_br/informar/indices.htm)
 2. Renomear: `IDKAPRE5.xls`, `IDKAPRE2.xls`, `IMAB5.xls`, `IMAB5MAIS.xls`, `IHFA.xls`, `IDADI.xls`
 3. Subir no GitHub:
    [upload/main](https://github.com/santosluisfelipe5502-spec/portfolio-hrp-bl/upload/main)
-4. Streamlit atualiza automaticamente em ~30 segundos
-            """)
-        st.markdown("""
+4. Streamlit atualiza automaticamente em ~30 segundos (se não, faça Reboot em Manage app)
+                """)
+            st.markdown("""
 **📅 Semestral — manutenção do modelo**
 - Recalcular pesos HRP: aba **Rebalanceamento** → botão "Recalcular pesos HRP com dados recentes"
 - Revisar visões BL: aba **Cenários** → ajustar premissas macro e rodar BL Dinâmico
 - Atualizar câmbio base no código se o dólar mudar significativamente
-        """)
+            """)
+        elif _senha_admin_guia:
+            st.error("❌ Senha incorreta.")
+        else:
+            st.info("🔒 Conteúdo restrito. Apenas o administrador tem acesso às "
+                    "instruções de atualização das bases.")
 
     # ── Rodapé do guia ────────────────────────────────────────────────────────
     st.divider()
