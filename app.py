@@ -2320,6 +2320,50 @@ retrovisor em troca de ser **consistente** na estrada à frente.
 seus próprios dados.*
         """)
 
+    # ── Seção 1c: Conceitos da Análise macro ──────────────────────────────────
+    with st.expander("🔬 Conceitos da Análise macro", expanded=False):
+        st.markdown("""
+**Como ler a aba Análise macro**
+
+Essa aba cruza o retorno das carteiras com fatores macroeconômicos (petróleo, VIX,
+juros, inflação, dólar, PIB...) para entender **a que o portfólio é sensível**. Alguns
+conceitos para interpretar corretamente:
+
+**📊 Correlação (−1 a +1)**
+Mede se dois movem **juntos**. +1 = andam sempre na mesma direção; −1 = sempre opostos;
+0 = independentes. Ex: se o HRP tem correlação −0,4 com o VIX, quando o "índice do medo"
+sobe, a carteira tende a cair. É uma medida **padronizada e comparável** entre fatores.
+
+**📈 Beta**
+Vai além da correlação: mede a **magnitude** do impacto. "Beta de +0,02 ao petróleo"
+significa que, para cada +1% no petróleo, a carteira rende ~0,02% a mais, em média.
+A correlação diz *se* há relação; o beta diz *quão forte* ela é.
+
+**🔄 Correlação dinâmica**
+Uma correlação única calculada em 15 anos **esconde** mudanças. A correlação dinâmica
+(janela móvel) mostra como a relação **evoluiu no tempo** — frequentemente ela sobe em
+crises (tudo passa a andar junto) e cai em períodos calmos. Por isso uma "correlação
+média" pode enganar.
+
+**🌐 Comportamento por regime**
+Em vez de uma média geral, separa os períodos em "fator alto" vs "fator baixo" e mede
+como a carteira se comporta em cada ambiente. Ex: como o HRP rende quando o VIX está
+elevado (stress) vs calmo. Revela em que cenário macro cada carteira brilha.
+
+---
+
+**⚠️ A regra de ouro: correlação NÃO é causalidade**
+
+Que o portfólio se mova junto com o petróleo **não significa** que o petróleo *cause*
+o movimento. Pode ser uma terceira variável (ex: humor global afeta os dois), ou pura
+coincidência estatística. Use a análise como um **mapa de exposições** — "a que minha
+carteira reage" — e nunca como uma regra de previsão ("se o petróleo subir, compro").
+
+**Por que isso importa:** identificar que a carteira tem alta correlação com um fator
+é identificar uma **aposta implícita**. Se você não sabia que estava exposto àquilo, é
+um risco oculto. A aba serve para trazer essas exposições à luz, não para prever o futuro.
+        """)
+
     # ── Seção 2: Os Ativos ────────────────────────────────────────────────────
     with st.expander("📦 Os ativos da carteira", expanded=False):
         ativos_info = [
@@ -7831,6 +7875,74 @@ with tab18:
             st.caption(f"Comportamento das carteiras quando {fator_reg} está acima (ALTA) vs "
                        f"abaixo (BAIXA) da sua variação mediana. Mostra em qual ambiente macro "
                        f"cada carteira performa melhor.")
+
+            # ── 5. SÍNTESE CONCLUSIVA (interpretação automática) ──────────────
+            st.divider()
+            st.markdown("#### 📌 Síntese — o que os dados dizem sobre o HRP+BL")
+
+            if "HRP+BL" in df_corr_macro.columns:
+                corr_hrp = df_corr_macro["HRP+BL"]
+                # Fatores ordenados por força de correlação (absoluta)
+                ordenados = corr_hrp.abs().sort_values(ascending=False)
+                fortes = [(f, corr_hrp[f]) for f in ordenados.index if abs(corr_hrp[f]) >= 0.20]
+                fracos = [f for f in ordenados.index if abs(corr_hrp[f]) < 0.10]
+
+                partes = []
+
+                # Exposições relevantes
+                if fortes:
+                    txt_fortes = []
+                    for f, v in fortes[:3]:
+                        direcao = "sobe junto" if v > 0 else "sobe quando cai"
+                        txt_fortes.append(f"**{f}** ({v:+.2f}, {direcao})")
+                    partes.append(
+                        "**Principais exposições:** o HRP+BL é mais sensível a " +
+                        ", ".join(txt_fortes) + ". São os fatores macro que mais "
+                        "influenciam o comportamento da carteira — vale acompanhá-los."
+                    )
+                else:
+                    partes.append(
+                        "**Baixa sensibilidade macro:** nenhum fator isolado domina o "
+                        "comportamento do HRP+BL (todas as correlações são moderadas). "
+                        "Isso é sinal de **boa diversificação** — a carteira não está "
+                        "'refém' de um único driver macroeconômico."
+                    )
+
+                # Fatores irrelevantes
+                if fracos:
+                    partes.append(
+                        "**Pouco relevantes:** " + ", ".join(fracos[:4]) +
+                        f" têm correlação próxima de zero — movimentos nesses fatores "
+                        f"quase não afetam a carteira."
+                    )
+
+                # Comparação de robustez entre modelos (menor exposição média = mais robusto)
+                exposicao_media = {}
+                for nome_c in df_corr_macro.columns:
+                    exposicao_media[nome_c] = df_corr_macro[nome_c].abs().mean()
+                mais_robusto = min(exposicao_media, key=exposicao_media.get)
+                partes.append(
+                    f"**Robustez macro:** entre os modelos, o **{mais_robusto}** tem a "
+                    f"menor exposição média aos fatores ({exposicao_media[mais_robusto]:.2f}) "
+                    f"— ou seja, é o menos dependente do ambiente macro. "
+                    f"{'Isso reforça a vantagem do HRP.' if mais_robusto == 'HRP+BL' else 'Vale observar como isso se relaciona com o retorno de cada um.'}"
+                )
+
+                for p in partes:
+                    st.markdown(f"- {p}")
+
+                st.markdown(
+                    "<div style='font-size:12px;padding:10px 14px;border-radius:6px;"
+                    "background:#378ADD12;border-left:3px solid #378ADD;margin-top:10px'>"
+                    "💡 <strong>Como usar na prática:</strong> conhecer as exposições macro "
+                    "ajuda a antecipar comportamento (ex: se você espera stress global, o VIX "
+                    "e o dólar indicam como a carteira pode reagir) e a identificar riscos "
+                    "ocultos (um fator com alta correlação é uma aposta implícita). Mas lembre: "
+                    "são relações históricas e instáveis — um guia de sensibilidade, não uma "
+                    "bola de cristal."
+                    "</div>",
+                    unsafe_allow_html=True
+                )
 
             st.divider()
             st.caption(
