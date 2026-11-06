@@ -220,7 +220,20 @@ ul[role="listbox"] li{color:#1a1a18 !important}
 [data-testid="stMetricLabel"] p{color:#888780 !important;font-size:13px !important}
 [data-testid="stMetricValue"]{color:#1a1a18 !important}
 [data-testid="stMarkdownContainer"] p{color:#1a1a18 !important}
-.stAlert p{color:#1a1a18 !important}
+[data-testid="stMarkdownContainer"] li{color:#1a1a18 !important}
+[data-testid="stMarkdownContainer"] strong{color:#1a1a18 !important}
+[data-testid="stMarkdownContainer"] em{color:#1a1a18 !important}
+/* Alertas (st.info / st.success / st.warning / st.error) no corpo principal */
+.stAlert{color:#1a1a18 !important}
+.stAlert p, .stAlert li, .stAlert strong, .stAlert em, .stAlert span, .stAlert div{color:#1a1a18 !important}
+[data-testid="stAlert"]{color:#1a1a18 !important}
+[data-testid="stAlert"] p, [data-testid="stAlert"] li, [data-testid="stAlert"] strong,
+[data-testid="stAlert"] em, [data-testid="stAlert"] span, [data-testid="stAlert"] div{color:#1a1a18 !important}
+[data-testid="stNotification"] *{color:#1a1a18 !important}
+/* Expanders (as seções do Guia) */
+[data-testid="stExpander"] p, [data-testid="stExpander"] li,
+[data-testid="stExpander"] strong, [data-testid="stExpander"] em{color:#1a1a18 !important}
+[data-testid="stExpanderDetails"] *{color:#1a1a18 !important}
 [data-testid="stDataFrame"] *{color:#1a1a18 !important}
 .metric-card{background:#fff;border:1px solid #e8e6e0;border-radius:10px;padding:16px 20px;margin-bottom:8px}
 .metric-label{font-size:11px;color:#888780 !important;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
@@ -7933,8 +7946,9 @@ with tab18:
 
                 st.markdown(
                     "<div style='font-size:12px;padding:10px 14px;border-radius:6px;"
-                    "background:#378ADD12;border-left:3px solid #378ADD;margin-top:10px'>"
-                    "💡 <strong>Como usar na prática:</strong> conhecer as exposições macro "
+                    "background:rgba(55,138,221,0.08);border-left:3px solid #378ADD;"
+                    "margin-top:10px;color:#1a1a18'>"
+                    "💡 <strong style='color:#1a1a18'>Como usar na prática:</strong> conhecer as exposições macro "
                     "ajuda a antecipar comportamento (ex: se você espera stress global, o VIX "
                     "e o dólar indicam como a carteira pode reagir) e a identificar riscos "
                     "ocultos (um fator com alta correlação é uma aposta implícita). Mas lembre: "
