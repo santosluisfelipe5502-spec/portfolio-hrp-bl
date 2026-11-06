@@ -51,6 +51,15 @@ _UNUSED = dict(
 )
 warnings.filterwarnings("ignore")
 
+def hex_to_rgba(hex_color, alpha=0.5):
+    """Converte cor hex para rgba com transparência (fundo claro legível)."""
+    h = str(hex_color).lstrip("#")
+    if len(h) == 6:
+        r,g,b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+        return f"rgba({r},{g},{b},{alpha})"
+    return hex_color
+
+
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║           ÍNDICE DO ARQUIVO — ONDE ENCONTRAR CADA COISA                    ║
 # ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -235,6 +244,14 @@ ul[role="listbox"] li{color:#1a1a18 !important}
 [data-testid="stExpander"] strong, [data-testid="stExpander"] em{color:#1a1a18 !important}
 [data-testid="stExpanderDetails"] *{color:#1a1a18 !important}
 [data-testid="stDataFrame"] *{color:#1a1a18 !important}
+/* Garantir fundo claro em todo o app (caso o tema escape) */
+[data-testid="stAppViewContainer"], [data-testid="stMain"], .main, .block-container{
+    background:#f8f7f4 !important; color:#1a1a18 !important}
+[data-testid="stHeader"]{background:#f8f7f4 !important}
+/* Markdown geral sempre com texto escuro */
+[data-testid="stMarkdown"] *{color:#1a1a18}
+[data-testid="stMarkdown"] span[style*="color"]{color:unset}
+.stMarkdown{color:#1a1a18 !important}
 .metric-card{background:#fff;border:1px solid #e8e6e0;border-radius:10px;padding:16px 20px;margin-bottom:8px}
 .metric-label{font-size:11px;color:#888780 !important;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
 .metric-value{font-size:26px;font-weight:500;color:#1a1a18 !important;line-height:1.1}
@@ -843,7 +860,7 @@ with st.sidebar:
 
     st.markdown(
         f"<div style='font-size:12px;padding:6px 10px;border-radius:6px;"
-        f"background:{cor_perfil}22;border-left:3px solid {cor_perfil};"
+        f"background:{hex_to_rgba(cor_perfil,0.13)};border-left:3px solid {cor_perfil};"
         f"color:{cor_perfil};margin-top:4px'>"
         f"{perfil_cfg['desc']}</div>",
         unsafe_allow_html=True
@@ -1660,14 +1677,6 @@ TAIL_EVENTS = [
      "desc": "Bloqueio do Estreito de Ormuz, choque de petróleo e fuga de risco global.", "tipo": "Global"},
 ]
 
-
-def hex_to_rgba(hex_color, alpha=0.5):
-    """Converte cor hex para rgba com transparência."""
-    h = hex_color.lstrip("#")
-    if len(h) == 6:
-        r,g,b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
-        return f"rgba({r},{g},{b},{alpha})"
-    return hex_color
 
 # ── Funções de geração de PDF ────────────────────────────────────────────────
 def fig_to_reportlab(fig, width_cm=16, height_cm=8):
@@ -3317,7 +3326,7 @@ with tab4:
     if perfil_sel != "HRP+BL Original":
         st.markdown(
             f"<div style='font-size:12px;padding:8px 12px;border-radius:6px;"
-            f"background:{cor_perfil}15;border-left:3px solid {cor_perfil};"
+            f"background:{hex_to_rgba(cor_perfil,0.08)};border-left:3px solid {cor_perfil};"
             f"margin-bottom:1rem'>"
             f"<strong style='color:{cor_perfil}'>Perfil {perfil_sel}</strong> — "
             f"pesos calculados com restrição de volatilidade "
@@ -6245,7 +6254,7 @@ with tab14:
 
         cs1, cs2, cs3, cs4 = st.columns(4)
         cs1.markdown(
-            f"<div style='padding:8px 12px;border-radius:6px;background:#1D9E7515;"
+            f"<div style='padding:8px 12px;border-radius:6px;background:rgba(29,158,117,0.08);"
             f"border-left:3px solid #1D9E75'><span style='font-size:11px;color:#888780'>"
             f"CICLOS DE CORTE</span><br><strong style='font-size:20px;color:#1D9E75'>"
             f"{len(ciclos_corte)}</strong>"
@@ -6255,7 +6264,7 @@ with tab14:
                if ciclos_corte else "")
             + "</div>", unsafe_allow_html=True)
         cs2.markdown(
-            f"<div style='padding:8px 12px;border-radius:6px;background:#E24B4A15;"
+            f"<div style='padding:8px 12px;border-radius:6px;background:rgba(226,75,74,0.08);"
             f"border-left:3px solid #E24B4A'><span style='font-size:11px;color:#888780'>"
             f"CICLOS DE ALTA</span><br><strong style='font-size:20px;color:#E24B4A'>"
             f"{len(ciclos_alta)}</strong>"
@@ -6287,7 +6296,7 @@ with tab14:
                 regime_atual_txt = "Alta"
                 cor_reg = "#E24B4A"
         cs4.markdown(
-            f"<div style='padding:8px 12px;border-radius:6px;background:{cor_reg}15;"
+            f"<div style='padding:8px 12px;border-radius:6px;background:{hex_to_rgba(cor_reg,0.08)};"
             f"border-left:3px solid {cor_reg}'><span style='font-size:11px;color:#888780'>"
             f"REGIME RECENTE</span><br><strong style='font-size:20px;color:{cor_reg}'>"
             f"{regime_atual_txt}</strong></div>", unsafe_allow_html=True)
@@ -6335,7 +6344,7 @@ with tab14:
             with col:
                 st.markdown(
                     f"<div style='padding:10px 14px;border-radius:8px;"
-                    f"background:{cor_s}15;border-left:4px solid {cor_s};margin-bottom:10px'>"
+                    f"background:{hex_to_rgba(cor_s,0.08)};border-left:4px solid {cor_s};margin-bottom:10px'>"
                     f"<span style='font-size:14px;font-weight:600;color:{cor_s}'>"
                     f"{emoji} Ciclos de {tipo_sint}</span><br>"
                     f"<span style='font-size:12px;color:#888780'>"
@@ -6447,21 +6456,21 @@ with tab14:
 
         col_i1, col_i2, col_i3 = st.columns(3)
         col_i1.markdown(
-            f"<div style='padding:8px 12px;border-radius:6px;background:#1a3a5c15;"
+            f"<div style='padding:8px 12px;border-radius:6px;background:rgba(26,58,92,0.08);"
             f"border-left:3px solid #1a3a5c'><span style='font-size:11px;color:#888780'>"
             f"MAIS CORRELACIONADOS</span><br><strong style='font-size:13px'>"
             f"{mais[0]} × {mais[1]}</strong><br>"
             f"<span style='color:#1a3a5c;font-weight:600'>{mais[2]:+.2f}</span></div>",
             unsafe_allow_html=True)
         col_i2.markdown(
-            f"<div style='padding:8px 12px;border-radius:6px;background:#1D9E7515;"
+            f"<div style='padding:8px 12px;border-radius:6px;background:rgba(29,158,117,0.08);"
             f"border-left:3px solid #1D9E75'><span style='font-size:11px;color:#888780'>"
             f"MELHOR DIVERSIFICAÇÃO (~0)</span><br><strong style='font-size:13px'>"
             f"{neutro[0]} × {neutro[1]}</strong><br>"
             f"<span style='color:#1D9E75;font-weight:600'>{neutro[2]:+.2f}</span></div>",
             unsafe_allow_html=True)
         col_i3.markdown(
-            f"<div style='padding:8px 12px;border-radius:6px;background:#B2222215;"
+            f"<div style='padding:8px 12px;border-radius:6px;background:rgba(178,34,34,0.08);"
             f"border-left:3px solid #B22222'><span style='font-size:11px;color:#888780'>"
             f"MAIS OPOSTOS</span><br><strong style='font-size:13px'>"
             f"{menos[0]} × {menos[1]}</strong><br>"
@@ -6502,14 +6511,14 @@ with tab14:
 
             col_cc, col_ca = st.columns(2)
             col_cc.markdown(
-                f"<div style='padding:12px 16px;border-radius:8px;background:#1D9E7515;"
+                f"<div style='padding:12px 16px;border-radius:8px;background:rgba(29,158,117,0.08);"
                 f"border-left:4px solid #1D9E75;text-align:center'>"
                 f"<span style='font-size:12px;color:#888780'>📉 CICLOS DE CORTE</span><br>"
                 f"<span style='font-size:24px;font-weight:700;color:#1D9E75'>{cm_corte:+.2f}</span><br>"
                 f"<span style='font-size:11px;color:#888780'>correlação média entre ativos</span></div>",
                 unsafe_allow_html=True)
             col_ca.markdown(
-                f"<div style='padding:12px 16px;border-radius:8px;background:#E24B4A15;"
+                f"<div style='padding:12px 16px;border-radius:8px;background:rgba(226,75,74,0.08);"
                 f"border-left:4px solid #E24B4A;text-align:center'>"
                 f"<span style='font-size:12px;color:#888780'>📈 CICLOS DE ALTA</span><br>"
                 f"<span style='font-size:24px;font-weight:700;color:#E24B4A'>{cm_alta:+.2f}</span><br>"
@@ -6539,7 +6548,7 @@ with tab14:
 
             cor_c = "#E24B4A" if corr_carteiras > 0.95 else "#C4770A" if corr_carteiras > 0.85 else "#1D9E75"
             st.markdown(
-                f"<div style='padding:12px 16px;border-radius:8px;background:{cor_c}15;"
+                f"<div style='padding:12px 16px;border-radius:8px;background:{hex_to_rgba(cor_c,0.08)};"
                 f"border-left:4px solid {cor_c}'>"
                 f"<span style='font-size:28px;font-weight:700;color:{cor_c}'>"
                 f"{corr_carteiras:.3f}</span> "
@@ -6736,7 +6745,7 @@ with tab14:
 
             with col_t:
                 st.markdown(
-                    f"<div style='padding:8px 12px;border-radius:6px;background:{cor_t}15;"
+                    f"<div style='padding:8px 12px;border-radius:6px;background:{hex_to_rgba(cor_t,0.08)};"
                     f"border-left:3px solid {cor_t};margin-bottom:8px'>"
                     f"<span style='font-size:13px;font-weight:600;color:{cor_t}'>"
                     f"{emoji} Início de {tipo_t}</span></div>",
@@ -7373,7 +7382,7 @@ with tab16:
                 cor_m = "#E24B4A" if imp_cont < 0 else "#1D9E75"
                 st.markdown(
                     f"<div style='padding:12px 16px;border-radius:8px;"
-                    f"background:{cor_m}12;border-left:4px solid {cor_m}'>"
+                    f"background:{hex_to_rgba(cor_m,0.07)};border-left:4px solid {cor_m}'>"
                     f"<div style='font-size:14px;font-weight:600;margin-bottom:8px'>"
                     f"{nome_modelo}</div>"
                     f"<div style='font-size:11px;color:#888780'>Impacto direto</div>"
@@ -7613,14 +7622,14 @@ with tab17:
 
             col_t1, col_t2 = st.columns(2)
             col_t1.markdown(
-                f"<div style='padding:12px 16px;border-radius:8px;background:#378ADD15;"
+                f"<div style='padding:12px 16px;border-radius:8px;background:rgba(55,138,221,0.08);"
                 f"border-left:4px solid #378ADD;text-align:center'>"
                 f"<span style='font-size:12px;color:#888780'>🔷 HRP+BL</span><br>"
                 f"<span style='font-size:26px;font-weight:700;color:#378ADD'>{to_hrp:.1f}%</span><br>"
                 f"<span style='font-size:11px;color:#888780'>turnover médio por recálculo</span></div>",
                 unsafe_allow_html=True)
             col_t2.markdown(
-                f"<div style='padding:12px 16px;border-radius:8px;background:#7F77DD15;"
+                f"<div style='padding:12px 16px;border-radius:8px;background:rgba(127,119,221,0.08);"
                 f"border-left:4px solid #7F77DD;text-align:center'>"
                 f"<span style='font-size:12px;color:#888780'>🟣 Markowitz</span><br>"
                 f"<span style='font-size:26px;font-weight:700;color:#7F77DD'>{to_mk:.1f}%</span><br>"
