@@ -271,6 +271,14 @@ div[data-testid="stHorizontalBlock"]{gap:12px}
 
 
 # ── Constantes ───────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# CONFIGURAÇÃO DO RECÁLCULO HRP (editar a cada recálculo semestral)
+# ══════════════════════════════════════════════════════════════════════════════
+# Troque esta data toda vez que rodar o recálculo dos pesos HRP.
+# O dashboard avisa automaticamente quando se aproxima dos 6 meses.
+ULTIMO_RECALCULO_HRP = "2026-09-01"   # formato: AAAA-MM-DD
+INTERVALO_RECALCULO_MESES = 6         # periodicidade do recálculo
+
 ASSET_CFG = [
     {"name": "IDkA Pré 5A","key": "IDKAPRE5",   "color": "#E24B4A", "cluster": "Renda fixa", "w": 0.230, "vol": 0.06},
     {"name": "IMA-B5",     "key": "IMAB5",      "color": "#1D9E75", "cluster": "Renda fixa", "w": 0.090, "vol": 0.05},
@@ -1442,6 +1450,35 @@ with col_h2:
         <span class='badge badge-blue' style='margin-top:4px'>rf = CDI médio {rf_ann*100:.2f}% a.a.</span>
     </div>
     """, unsafe_allow_html=True)
+
+# ── Alerta de recálculo HRP (semestral) ───────────────────────────────────────
+try:
+    from datetime import datetime as _dt
+    _ult_recalc = pd.Timestamp(ULTIMO_RECALCULO_HRP)
+    _hoje_alerta = pd.Timestamp.now().normalize()
+    _meses_desde = (_hoje_alerta.year - _ult_recalc.year) * 12 + (_hoje_alerta.month - _ult_recalc.month)
+    _proximo_recalc = _ult_recalc + pd.DateOffset(months=INTERVALO_RECALCULO_MESES)
+    _dias_para_proximo = (_proximo_recalc - _hoje_alerta).days
+
+    if _dias_para_proximo < 0:
+        # Já passou da data — alerta vermelho
+        st.error(
+            f"🔔 **Recálculo HRP atrasado!** O último recálculo foi em "
+            f"{_ult_recalc.strftime('%b/%Y')} (há {_meses_desde} meses). "
+            f"O recálculo semestral era esperado para {_proximo_recalc.strftime('%b/%Y')}. "
+            f"Rode o recálculo na aba **Rebalanceamento** (requer senha de admin) e atualize "
+            f"a data no código."
+        )
+    elif _dias_para_proximo <= 30:
+        # Está perto — alerta amarelo
+        st.warning(
+            f"⏰ **Recálculo HRP se aproximando.** Último recálculo em "
+            f"{_ult_recalc.strftime('%b/%Y')}. Próximo previsto para "
+            f"{_proximo_recalc.strftime('%b/%Y')} (em {_dias_para_proximo} dias). "
+            f"Prepare-se para rodar o recálculo semestral na aba Rebalanceamento."
+        )
+except Exception:
+    pass
 
 # ── Alertas de rebalanceamento ────────────────────────────────────────────────
 # Calcula drift atual dos pesos e exibe alerta se algum ativo ultrapassar a banda
@@ -3344,6 +3381,30 @@ with tab4:
             "de retornos reais dos ativos e sugere novos pesos. "
             "Use semestralmente para manter o modelo atualizado."
         )
+
+        # ── Painel de datas do recálculo ──────────────────────────────────────
+        try:
+            _ur = pd.Timestamp(ULTIMO_RECALCULO_HRP)
+            _pr = _ur + pd.DateOffset(months=INTERVALO_RECALCULO_MESES)
+            _dias_p = (_pr - pd.Timestamp.now().normalize()).days
+            _cor_status = "#1D9E75" if _dias_p > 30 else "#C4770A" if _dias_p > 0 else "#E24B4A"
+            _status_txt = ("em dia" if _dias_p > 30 else
+                           f"próximo em {_dias_p} dias" if _dias_p > 0 else
+                           f"ATRASADO há {abs(_dias_p)} dias")
+            st.markdown(
+                f"<div style='font-size:12px;padding:8px 12px;border-radius:6px;"
+                f"background:{hex_to_rgba(_cor_status,0.08)};border-left:3px solid {_cor_status};"
+                f"margin-bottom:10px;color:#1a1a18'>"
+                f"📅 <strong>Último recálculo:</strong> {_ur.strftime('%d/%m/%Y')} · "
+                f"<strong>Próximo previsto:</strong> {_pr.strftime('%d/%m/%Y')} · "
+                f"<strong style='color:{_cor_status}'>{_status_txt}</strong><br>"
+                f"<span style='font-size:11px;color:#888780'>Após rodar o recálculo, "
+                f"atualize a data em <code>ULTIMO_RECALCULO_HRP</code> no topo do código.</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        except Exception:
+            pass
 
         # ── Proteção por senha — apenas o gestor pode recalcular ─────────────
         SENHA_GESTOR = "TcgQeCqhysjL"
