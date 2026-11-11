@@ -7829,8 +7829,125 @@ with tab18:
             if ret_mk_macro is not None:
                 carteiras["Markowitz"] = ret_mk_macro
 
-            # ── 1. MATRIZ DE SENSIBILIDADE (correlação) ───────────────────────
-            st.markdown("#### 1. Sensibilidade a fatores macro (correlação)")
+            # ══════════════════════════════════════════════════════════════
+            # ── DIAGNÓSTICO ESTATÍSTICO (validação prévia da base) ─────────
+            # ══════════════════════════════════════════════════════════════
+            st.markdown("<div class='section-title'>validação prévia — a base é adequada?</div>",
+                        unsafe_allow_html=True)
+            st.markdown(
+                "**Antes de analisar correlações, validamos a qualidade estatística das séries.** "
+                "O teste de estacionariedade confirma se os retornos são bem-comportados o "
+                "suficiente para as análises temporais serem confiáveis."
+            )
+
+            # ── ESTACIONARIEDADE (ADF) ─────────────────────────────────────
+            st.markdown("#### 1. Estacionariedade dos retornos (teste ADF)")
+            st.markdown(
+                "O HRP **assume** que a estrutura de risco dos ativos é estável no tempo. "
+                "Retornos **estacionários** (média e variância constantes) sustentam essa "
+                "premissa. Se um ativo não for estacionário, seus pesos no HRP merecem atenção extra."
+            )
+
+            adf_rows = []
+            for cfg in ASSET_CFG:
+                r_ativo = ret_macro_dict[cfg["name"]].dropna()
+                t_stat, estac = adf_test_manual(r_ativo)
+                if t_stat is not None:
+                    adf_rows.append({
+                        "Ativo": cfg["name"],
+                        "Estatística ADF": f"{t_stat:.2f}",
+                        "Estacionário?": "✅ Sim" if estac else "⚠️ Não",
+                        "Interpretação": ("Estrutura estável — premissa do HRP atendida"
+                                          if estac else
+                                          "Estrutura pode derivar no tempo — monitorar"),
+                    })
+            df_adf = pd.DataFrame(adf_rows).set_index("Ativo")
+            st.dataframe(df_adf, use_container_width=True)
+
+            n_estac = sum(1 for r in adf_rows if "Sim" in r["Estacionário?"])
+            if n_estac == len(adf_rows):
+                st.success(
+                    f"✅ **Todos os {len(adf_rows)} ativos têm retornos estacionários.** "
+                    f"A premissa fundamental do HRP (estrutura de risco estável) está "
+                    f"bem atendida pelos seus dados — isso dá confiança nos pesos calculados."
+                )
+            else:
+                nao_estac = [r["Ativo"] for r in adf_rows if "Não" in r["Estacionário?"]]
+                st.info(
+                    f"📊 {n_estac} de {len(adf_rows)} ativos são estacionários. "
+                    f"Atenção a: **{', '.join(nao_estac)}** — seus retornos podem ter "
+                    f"média/variância que mudam no tempo. Não invalida o HRP, mas vale "
+                    f"monitorar o peso desses ativos nos recálculos."
+                )
+            st.caption("Teste ADF: estatística < −2,86 (nível 5%) indica série estacionária "
+                       "(rejeita raiz unitária). Retornos de ativos financeiros geralmente "
+                       "são estacionários; preços não são.")
+
+            # ── SAZONALIDADE (efeito mês) ──────────────────────────────────
+            st.markdown("#### 2. Sazonalidade — existe efeito calendário?")
+            st.markdown("Retorno médio de cada carteira por **mês do ano** ao longo do histórico. "
+                        "Revela se há meses sistematicamente melhores ou piores.")
+
+            meses_nomes = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+            fig_sazon = go.Figure()
+            cores_cart = {"HRP+BL": "#378ADD", "Customizado": "#C4770A", "Markowitz": "#7F77DD"}
+            for nome_c, ret_c in carteiras.items():
+                ret_por_mes = ret_c.groupby(ret_c.index.month).mean() * 100
+                valores = [ret_por_mes.get(m, 0) for m in range(1, 13)]
+                fig_sazon.add_trace(go.Bar(
+                    x=meses_nomes, y=[round(v,2) for v in valores],
+                    name=nome_c, marker_color=cores_cart.get(nome_c, "#888780")))
+            fig_sazon.update_layout(
+                plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                height=300, barmode="group", font=dict(color="#1a1a18"),
+                margin=dict(l=0, r=0, t=8, b=0),
+                legend=dict(orientation="h", y=1.05, x=0, font=dict(color="#1a1a18")),
+                xaxis=dict(tickfont=dict(color="#444441"), color="#1a1a18"),
+                yaxis=dict(title="Retorno médio (%)", ticksuffix="%", gridcolor="#e8e6e0",
+                           zerolinecolor="#888780", tickfont=dict(color="#444441"), color="#1a1a18"),
+            )
+            st.plotly_chart(fig_sazon, use_container_width=True)
+
+            # Insight de sazonalidade do HRP
+            hrp_mes = ret_hrp_macro.groupby(ret_hrp_macro.index.month).mean() * 100
+            if len(hrp_mes) >= 12:
+                melhor_mes = hrp_mes.idxmax()
+                pior_mes = hrp_mes.idxmin()
+                st.info(
+                    f"📊 Para o **HRP+BL**, o mês historicamente mais forte é "
+                    f"**{meses_nomes[melhor_mes-1]}** ({hrp_mes[melhor_mes]:+.2f}% médio) e o "
+                    f"mais fraco é **{meses_nomes[pior_mes-1]}** ({hrp_mes[pior_mes]:+.2f}% médio). "
+                    f"⚠️ Padrões sazonais do passado **não garantem** repetição — use como "
+                    f"curiosidade, não como estratégia de timing."
+                )
+
+            # ── AUTOCORRELAÇÃO (bônus) ─────────────────────────────────────
+            st.markdown("#### 3. Autocorrelação — momentum ou reversão?")
+            st.markdown("O retorno de um mês ajuda a prever o do mês seguinte? "
+                        "Positiva = momentum (tende a continuar); negativa = reversão (tende a inverter).")
+
+            autocorr_rows = []
+            for nome_c, ret_c in carteiras.items():
+                r = ret_c.dropna()
+                if len(r) > 24:
+                    ac1 = r.autocorr(lag=1)
+                    ac3 = r.autocorr(lag=3)
+                    ac12 = r.autocorr(lag=12)
+                    autocorr_rows.append({
+                        "Carteira": nome_c,
+                        "Lag 1 mês": f"{ac1:+.2f}" if not pd.isna(ac1) else "—",
+                        "Lag 3 meses": f"{ac3:+.2f}" if not pd.isna(ac3) else "—",
+                        "Lag 12 meses": f"{ac12:+.2f}" if not pd.isna(ac12) else "—",
+                    })
+            df_autocorr = pd.DataFrame(autocorr_rows).set_index("Carteira")
+            st.dataframe(df_autocorr, use_container_width=True)
+            st.caption("Autocorrelação perto de 0 = retornos praticamente independentes (ideal "
+                       "para um modelo que não aposta em timing). Valores fortes (>0,2 ou <−0,2) "
+                       "indicariam padrão explorável — raro em carteiras diversificadas.")
+
+            st.divider()
+            # ── 4. MATRIZ DE SENSIBILIDADE (correlação) ───────────────────────
+            st.markdown("#### 4. Sensibilidade a fatores macro (correlação)")
             st.caption("Correlação entre o retorno mensal de cada carteira e a variação de "
                        "cada fator. Azul = movem juntos; vermelho = movem opostos.")
 
@@ -7884,7 +8001,7 @@ with tab18:
                 )
 
             # ── 2. BETA (regressão) ───────────────────────────────────────────
-            st.markdown("#### 2. Beta — impacto de cada fator")
+            st.markdown("#### 5. Beta — impacto de cada fator")
             st.caption("Quanto a carteira rende para cada +1 unidade de variação no fator "
                        "(regressão linear). Winsorizado para resistir a meses atípicos.")
 
@@ -7915,7 +8032,7 @@ with tab18:
                        "petróleo/VIX/dólar, é o retorno % do fator.")
 
             # ── 3. CORRELAÇÃO DINÂMICA (janela móvel) ─────────────────────────
-            st.markdown("#### 3. Correlação dinâmica — como a sensibilidade muda no tempo")
+            st.markdown("#### 6. Correlação dinâmica — como a sensibilidade muda no tempo")
             fator_din = st.selectbox(
                 "Fator para ver a evolução da correlação com o HRP+BL",
                 list(df_fat_var.columns), key="macro_fator_din"
@@ -7958,7 +8075,7 @@ with tab18:
                            f"uma correlação 'média' única esconde a dinâmica real.")
 
             # ── 4. COMPORTAMENTO POR REGIME MACRO ─────────────────────────────
-            st.markdown("#### 4. Comportamento por regime macro")
+            st.markdown("#### 7. Comportamento por regime macro")
             fator_reg = st.selectbox(
                 "Fator para definir os regimes",
                 list(df_fat_var.columns), key="macro_fator_reg"
@@ -8057,122 +8174,6 @@ with tab18:
                     unsafe_allow_html=True
                 )
 
-            # ══════════════════════════════════════════════════════════════
-            # ── DIAGNÓSTICO ESTATÍSTICO DAS SÉRIES ─────────────────────────
-            # ══════════════════════════════════════════════════════════════
-            st.divider()
-            st.markdown("<div class='section-title'>diagnóstico estatístico das séries</div>",
-                        unsafe_allow_html=True)
-            st.markdown(
-                "Testes sobre as propriedades estatísticas dos retornos — validam premissas "
-                "do modelo e revelam padrões. Diferente das correlações acima, aqui olhamos "
-                "a estrutura interna de cada série."
-            )
-
-            # ── 6. ESTACIONARIEDADE (ADF) ─────────────────────────────────────
-            st.markdown("#### Estacionariedade dos retornos (teste ADF)")
-            st.markdown(
-                "O HRP **assume** que a estrutura de risco dos ativos é estável no tempo. "
-                "Retornos **estacionários** (média e variância constantes) sustentam essa "
-                "premissa. Se um ativo não for estacionário, seus pesos no HRP merecem atenção extra."
-            )
-
-            adf_rows = []
-            for cfg in ASSET_CFG:
-                r_ativo = ret_macro_dict[cfg["name"]].dropna()
-                t_stat, estac = adf_test_manual(r_ativo)
-                if t_stat is not None:
-                    adf_rows.append({
-                        "Ativo": cfg["name"],
-                        "Estatística ADF": f"{t_stat:.2f}",
-                        "Estacionário?": "✅ Sim" if estac else "⚠️ Não",
-                        "Interpretação": ("Estrutura estável — premissa do HRP atendida"
-                                          if estac else
-                                          "Estrutura pode derivar no tempo — monitorar"),
-                    })
-            df_adf = pd.DataFrame(adf_rows).set_index("Ativo")
-            st.dataframe(df_adf, use_container_width=True)
-
-            n_estac = sum(1 for r in adf_rows if "Sim" in r["Estacionário?"])
-            if n_estac == len(adf_rows):
-                st.success(
-                    f"✅ **Todos os {len(adf_rows)} ativos têm retornos estacionários.** "
-                    f"A premissa fundamental do HRP (estrutura de risco estável) está "
-                    f"bem atendida pelos seus dados — isso dá confiança nos pesos calculados."
-                )
-            else:
-                nao_estac = [r["Ativo"] for r in adf_rows if "Não" in r["Estacionário?"]]
-                st.info(
-                    f"📊 {n_estac} de {len(adf_rows)} ativos são estacionários. "
-                    f"Atenção a: **{', '.join(nao_estac)}** — seus retornos podem ter "
-                    f"média/variância que mudam no tempo. Não invalida o HRP, mas vale "
-                    f"monitorar o peso desses ativos nos recálculos."
-                )
-            st.caption("Teste ADF: estatística < −2,86 (nível 5%) indica série estacionária "
-                       "(rejeita raiz unitária). Retornos de ativos financeiros geralmente "
-                       "são estacionários; preços não são.")
-
-            # ── 7. SAZONALIDADE (efeito mês) ──────────────────────────────────
-            st.markdown("#### Sazonalidade — existe efeito calendário?")
-            st.markdown("Retorno médio de cada carteira por **mês do ano** ao longo do histórico. "
-                        "Revela se há meses sistematicamente melhores ou piores.")
-
-            meses_nomes = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
-            fig_sazon = go.Figure()
-            cores_cart = {"HRP+BL": "#378ADD", "Customizado": "#C4770A", "Markowitz": "#7F77DD"}
-            for nome_c, ret_c in carteiras.items():
-                ret_por_mes = ret_c.groupby(ret_c.index.month).mean() * 100
-                valores = [ret_por_mes.get(m, 0) for m in range(1, 13)]
-                fig_sazon.add_trace(go.Bar(
-                    x=meses_nomes, y=[round(v,2) for v in valores],
-                    name=nome_c, marker_color=cores_cart.get(nome_c, "#888780")))
-            fig_sazon.update_layout(
-                plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
-                height=300, barmode="group", font=dict(color="#1a1a18"),
-                margin=dict(l=0, r=0, t=8, b=0),
-                legend=dict(orientation="h", y=1.05, x=0, font=dict(color="#1a1a18")),
-                xaxis=dict(tickfont=dict(color="#444441"), color="#1a1a18"),
-                yaxis=dict(title="Retorno médio (%)", ticksuffix="%", gridcolor="#e8e6e0",
-                           zerolinecolor="#888780", tickfont=dict(color="#444441"), color="#1a1a18"),
-            )
-            st.plotly_chart(fig_sazon, use_container_width=True)
-
-            # Insight de sazonalidade do HRP
-            hrp_mes = ret_hrp_macro.groupby(ret_hrp_macro.index.month).mean() * 100
-            if len(hrp_mes) >= 12:
-                melhor_mes = hrp_mes.idxmax()
-                pior_mes = hrp_mes.idxmin()
-                st.info(
-                    f"📊 Para o **HRP+BL**, o mês historicamente mais forte é "
-                    f"**{meses_nomes[melhor_mes-1]}** ({hrp_mes[melhor_mes]:+.2f}% médio) e o "
-                    f"mais fraco é **{meses_nomes[pior_mes-1]}** ({hrp_mes[pior_mes]:+.2f}% médio). "
-                    f"⚠️ Padrões sazonais do passado **não garantem** repetição — use como "
-                    f"curiosidade, não como estratégia de timing."
-                )
-
-            # ── 8. AUTOCORRELAÇÃO (bônus) ─────────────────────────────────────
-            st.markdown("#### Autocorrelação — momentum ou reversão?")
-            st.markdown("O retorno de um mês ajuda a prever o do mês seguinte? "
-                        "Positiva = momentum (tende a continuar); negativa = reversão (tende a inverter).")
-
-            autocorr_rows = []
-            for nome_c, ret_c in carteiras.items():
-                r = ret_c.dropna()
-                if len(r) > 24:
-                    ac1 = r.autocorr(lag=1)
-                    ac3 = r.autocorr(lag=3)
-                    ac12 = r.autocorr(lag=12)
-                    autocorr_rows.append({
-                        "Carteira": nome_c,
-                        "Lag 1 mês": f"{ac1:+.2f}" if not pd.isna(ac1) else "—",
-                        "Lag 3 meses": f"{ac3:+.2f}" if not pd.isna(ac3) else "—",
-                        "Lag 12 meses": f"{ac12:+.2f}" if not pd.isna(ac12) else "—",
-                    })
-            df_autocorr = pd.DataFrame(autocorr_rows).set_index("Carteira")
-            st.dataframe(df_autocorr, use_container_width=True)
-            st.caption("Autocorrelação perto de 0 = retornos praticamente independentes (ideal "
-                       "para um modelo que não aposta em timing). Valores fortes (>0,2 ou <−0,2) "
-                       "indicariam padrão explorável — raro em carteiras diversificadas.")
 
             st.divider()
             st.caption(
