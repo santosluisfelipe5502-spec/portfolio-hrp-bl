@@ -610,6 +610,96 @@ def fetch_fatores_macro():
     df_fat = pd.DataFrame(fatores)
     return df_fat
 
+def _ler_bba_xlsx(path):
+    """Garimpa as projeções macro da planilha ORIGINAL do Itaú BBA (formato
+    'brazil long term forecasts'). Anos nas colunas (com sufixo P), indicadores
+    nas linhas (busca por rótulo exato na aba Brasil). Robusto a mudanças de linha."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb["Brasil"] if "Brasil" in wb.sheetnames else wb[wb.sheetnames[0]]
+    # Anos (linha 2) → coluna
+    anos_col = {}
+    for col in range(1, ws.max_column+1):
+        v = ws.cell(row=2, column=col).value
+        if v is not None:
+            ano_str = str(v).replace("P","").replace("p","").strip()
+            try:
+                ano = int(float(ano_str))
+                if 2020 <= ano <= 2040:
+                    anos_col[ano] = col
+            except Exception:
+                pass
+    # Indicadores por rótulo EXATO (evita pegar PIB global em vez do Brasil)
+    mapa_exato = {
+        "selic_fim":   "selic – final do ano",
+        "ipca":        "ipca",
+        "igpm":        "igp-m",
+        "pib_real":    "crescimento real do pib",
+        "cdi_fim":     "cdi - final do ano (anualizado)",
+        "juro_real":   "taxa real de juros (selic/ipca) – fim de período",
+        "brl_usd_dez": "brl / usd – dez",
+    }
+    ind_linha = {}
+    for row in range(1, ws.max_row+1):
+        rotulo = None
+        for col in range(1, 5):
+            v = ws.cell(row=row, column=col).value
+            if isinstance(v, str) and v.strip():
+                rotulo = v.lower().strip()
+                break
+        if rotulo:
+            for ind_key, alvo in mapa_exato.items():
+                if ind_key not in ind_linha and rotulo == alvo:
+                    ind_linha[ind_key] = row
+    proj = {}
+    for ano, col in anos_col.items():
+        if ano >= 2025:
+            for ind_key, linha in ind_linha.items():
+                v = ws.cell(row=linha, column=col).value
+                if v is not None:
+                    try:
+                        proj.setdefault(ano, {})[ind_key] = float(v)
+                    except Exception:
+                        pass
+    return proj if proj else None
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_projecoes_bba():
+    """Lê as projeções macro do Itaú BBA do repositório. Aceita DOIS formatos:
+    1. A planilha ORIGINAL do BBA (brazil_long_term_forecasts*.xlsx) — leitura direta
+    2. Um CSV simplificado (projecoes_bba.csv) com colunas ano/indicador/valor
+    Retorna dict {ano: {indicador: valor}} ou None."""
+    import os, glob
+    # Formato 1: planilha original do BBA (qualquer nome com "long_term" ou "bba")
+    for base in ["dados", "data", "."]:
+        if not os.path.isdir(base):
+            continue
+        for padrao in ["*long_term*.xlsx", "*long-term*.xlsx", "*bba*.xlsx",
+                       "brazil*.xlsx", "*forecast*.xlsx"]:
+            for path in glob.glob(os.path.join(base, padrao)):
+                try:
+                    proj = _ler_bba_xlsx(path)
+                    if proj:
+                        return proj
+                except Exception:
+                    continue
+    # Formato 2: CSV simplificado (fallback)
+    for base in ["dados", "data", "."]:
+        for ext in ["", ".csv"]:
+            path = os.path.join(base, "projecoes_bba" + ext)
+            if os.path.exists(path):
+                try:
+                    df = pd.read_csv(path)
+                    if {"ano","indicador","valor"}.issubset(df.columns):
+                        proj = {}
+                        for _, row in df.iterrows():
+                            ano = int(row["ano"])
+                            proj.setdefault(ano, {})[row["indicador"]] = float(row["valor"])
+                        return proj
+                except Exception:
+                    continue
+    return None
+
 def read_uploaded(file):
     """Lê XLS/XLSX/CSV em DataFrame com duas colunas: data, valor.
     Suporta formato ANBIMA (código, data, valor), Investing.com (Data, Último, ...)
@@ -3740,8 +3830,46 @@ with tab5:
         "Rali de risco":      dict(selic=11.0,  ipca=4.0, pib=3.5, fx=4.8),
         "Customizado":        dict(selic=14.50, ipca=5.5, pib=2.0, fx=4.99),
     }
-    preset = st.selectbox("Cenário pré-definido", list(presets.keys()))
-    p = presets[preset]
+    # ── Fonte das premissas: manual OU projeções Itaú BBA ─────────────────────
+    _proj_bba = load_projecoes_bba()
+    fonte_premissas = st.radio(
+        "Fonte das premissas macro",
+        ["✍️ Minhas premissas", "🏦 Projeções Itaú BBA"],
+        horizontal=True,
+        key="fonte_premissas_cen",
+        help="Escolha entre definir as premissas manualmente ou usar as projeções "
+             "de longo prazo do Itaú BBA."
+    )
+
+    # Valores default dos presets (usados no modo manual)
+    if fonte_premissas == "🏦 Projeções Itaú BBA" and _proj_bba is not None:
+        anos_bba = sorted(_proj_bba.keys())
+        ano_bba = st.selectbox(
+            "Ano da projeção BBA",
+            anos_bba,
+            index=min(1, len(anos_bba)-1),  # default: próximo ano se existir
+            key="ano_bba_cen",
+            help="Horizonte da projeção. O BBA projeta vários anos à frente."
+        )
+        _pb = _proj_bba[ano_bba]
+        # Mapear projeções BBA para os campos (Selic, IPCA, PIB, FX)
+        _selic_bba = _pb.get("selic_fim", _pb.get("selic_media", 14.5)) * 100
+        _ipca_bba = _pb.get("ipca", 0.045) * 100
+        _pib_bba = _pb.get("pib_real", 0.02) * 100
+        _fx_bba = _pb.get("brl_usd_dez", _pb.get("brl_usd_media", 5.0))
+        p = dict(selic=_selic_bba, ipca=_ipca_bba, pib=_pib_bba, fx=_fx_bba)
+        preset = f"Itaú BBA {ano_bba}"
+        st.success(
+            f"📊 **Projeções Itaú BBA para {ano_bba}:** Selic {_selic_bba:.2f}% · "
+            f"IPCA {_ipca_bba:.2f}% · PIB {_pib_bba:.2f}% · USD/BRL {_fx_bba:.2f}. "
+            f"Você pode ajustar os valores abaixo se quiser."
+        )
+    else:
+        if fonte_premissas == "🏦 Projeções Itaú BBA" and _proj_bba is None:
+            st.warning("Arquivo de projeções BBA não encontrado no repositório "
+                       "(projecoes_bba.csv). Usando premissas manuais.")
+        preset = st.selectbox("Cenário pré-definido", list(presets.keys()))
+        p = presets[preset]
 
     # ── Inputs numéricos ──
     c1, c2, c3, c4 = st.columns(4)
