@@ -393,16 +393,57 @@ def markowitz_target_vol(returns_df, target_vol_annual, allow_short=False):
     w = np.clip(res.x, 0, 1)
     return w / w.sum()
 
-def compute_hrp(returns_df):
+def ledoit_wolf_shrinkage(returns_df):
+    """Encolhe a matriz de covariância em direção a um alvo estruturado (Ledoit-Wolf).
+    Reduz o ruído de estimação, deixando a covariância mais estável — especialmente
+    útil com histórico curto ou muitos ativos. Retorna a matriz encolhida (DataFrame)."""
+    X = returns_df.values
+    n, p = X.shape
+    if n < 3 or p < 2:
+        return returns_df.cov()
+    Xc = X - X.mean(axis=0)
+    S = (Xc.T @ Xc) / n                       # covariância amostral (MLE)
+    # Alvo: matriz com variâncias na diagonal e correlação média fora dela
+    var = np.diag(S)
+    std = np.sqrt(var)
+    corr_mat = S / np.outer(std, std)
+    np.fill_diagonal(corr_mat, 0)
+    r_bar = corr_mat.sum() / (p*(p-1)) if p > 1 else 0   # correlação média
+    F = r_bar * np.outer(std, std)
+    np.fill_diagonal(F, var)                   # alvo F
+    # Intensidade de encolhimento (fórmula simplificada de Ledoit-Wolf)
+    d2 = np.sum((S - F)**2)
+    # Variância do estimador
+    pi_mat = np.zeros((p, p))
+    for i in range(n):
+        xi = Xc[i:i+1].T @ Xc[i:i+1]
+        pi_mat += (xi - S)**2
+    pi_mat /= n
+    pi = pi_mat.sum()
+    shrink = max(0.0, min(1.0, (pi / d2) / n)) if d2 > 0 else 0.0
+    S_shrunk = shrink * F + (1 - shrink) * S
+    return pd.DataFrame(S_shrunk, index=returns_df.columns, columns=returns_df.columns)
+
+def compute_hrp(returns_df, usar_shrinkage=False):
     """Calcula pesos HRP dado um DataFrame de retornos mensais.
     Etapas: correlação → distância → clusterização → quasi-diag → alocação recursiva.
+    usar_shrinkage=True aplica Ledoit-Wolf na covariância (mais robusto a ruído).
     """
     # Remover colunas com NaN excessivo
     returns_df = returns_df.dropna(axis=1, thresh=int(len(returns_df)*0.7))
     returns_df = returns_df.fillna(0)
 
-    cov  = returns_df.cov()
-    corr = returns_df.corr()
+    if usar_shrinkage:
+        cov = ledoit_wolf_shrinkage(returns_df)
+        # Correlação derivada da covariância encolhida (clip evita sqrt de negativo)
+        _diag = np.clip(np.diag(cov.values), 1e-12, None)
+        _std = np.sqrt(_diag)
+        corr = pd.DataFrame(cov.values / np.outer(_std, _std),
+                            index=cov.index, columns=cov.columns)
+        corr = corr.clip(-1, 1)
+    else:
+        cov  = returns_df.cov()
+        corr = returns_df.corr()
 
     # Etapa 1: Matriz de distância
     dist = np.sqrt((1 - corr) / 2)
@@ -1569,6 +1610,53 @@ with col_h2:
         <span class='badge badge-blue' style='margin-top:4px'>rf = CDI médio {rf_ann*100:.2f}% a.a.</span>
     </div>
     """, unsafe_allow_html=True)
+
+# ── Validação de qualidade dos dados ──────────────────────────────────────────
+# Checa cada série de ativo: buracos, séries paradas, poucos dados, valores suspeitos.
+try:
+    _avisos_dados = []
+    _hoje_val = pd.Timestamp.now().normalize()
+    for cfg in ASSET_CFG:
+        nome = cfg["name"]
+        if nome not in series or series[nome] is None:
+            _avisos_dados.append(f"**{nome}**: sem dados carregados")
+            continue
+        s = series[nome]["valor"].dropna()
+        if len(s) == 0:
+            _avisos_dados.append(f"**{nome}**: série vazia")
+            continue
+        # 1. Série parada (último dado muito antigo) — exceto alternativos recentes
+        meses_atraso = (_hoje_val.year - s.index[-1].year)*12 + (_hoje_val.month - s.index[-1].month)
+        if meses_atraso >= 3:
+            _avisos_dados.append(
+                f"**{nome}**: último dado em {s.index[-1].strftime('%b/%Y')} "
+                f"(há {meses_atraso} meses) — pode estar desatualizado")
+        # 2. Poucos dados para análise robusta
+        if len(s) < 24:
+            _avisos_dados.append(
+                f"**{nome}**: apenas {len(s)} observações (mín. recomendado: 24) — "
+                f"métricas menos confiáveis")
+        # 3. Valores suspeitos: retornos mensais extremos (> 50% num mês para RF, pode ser erro)
+        rets_check = s.pct_change().dropna()
+        if len(rets_check) > 0:
+            extremos = rets_check[(rets_check.abs() > 0.80)]
+            # Bitcoin/Ouro podem ter movimentos grandes; renda fixa não
+            if cfg["cluster"] == "Renda fixa" and len(rets_check[rets_check.abs() > 0.15]) > 0:
+                mes_susp = rets_check[rets_check.abs() > 0.15].index[0]
+                _avisos_dados.append(
+                    f"**{nome}**: variação mensal suspeita em {mes_susp.strftime('%b/%Y')} "
+                    f"({rets_check[rets_check.abs() > 0.15].iloc[0]*100:+.0f}%) — "
+                    f"incomum para renda fixa, verificar base")
+
+    if _avisos_dados:
+        with st.expander(f"⚠️ Qualidade dos dados — {len(_avisos_dados)} aviso(s)", expanded=False):
+            st.caption("Verificações automáticas das séries. Avisos não impedem o uso, "
+                       "mas vale conferir as bases apontadas.")
+            for av in _avisos_dados:
+                st.markdown(f"- {av}")
+    # Se tudo ok, não mostra nada (não poluir)
+except Exception:
+    pass
 
 # ── Alerta de recálculo HRP (semestral) ───────────────────────────────────────
 try:
@@ -3553,6 +3641,14 @@ with tab4:
             disabled=not senha_ok,
         )
 
+        usar_shrink_hrp = st.checkbox(
+            "Aplicar shrinkage (Ledoit-Wolf) na covariância",
+            value=False, key="shrink_hrp", disabled=not senha_ok,
+            help="Encolhe a matriz de covariância para reduzir ruído de estimação. "
+                 "Deixa os pesos mais estáveis, especialmente com histórico curto. "
+                 "Recomendado quando há ativos de histórico curto (Bitcoin) ou muitos ativos."
+        )
+
         if not senha_ok and not senha_input:
             st.info("🔒 Digite a senha do gestor para acessar esta funcionalidade.")
 
@@ -3572,7 +3668,10 @@ with tab4:
                     if len(ret_df.columns) < 3:
                         st.warning("⚠️ Dados insuficientes para recalcular. Verifique as séries carregadas.")
                     else:
-                        novos_pesos = compute_hrp(ret_df)
+                        novos_pesos = compute_hrp(ret_df, usar_shrinkage=usar_shrink_hrp)
+                        if usar_shrink_hrp:
+                            st.caption("✅ Pesos calculados com shrinkage Ledoit-Wolf "
+                                       "(covariância encolhida para maior robustez).")
 
                         # Comparativo visual
                         st.markdown("#### Novos pesos sugeridos vs pesos atuais")
@@ -7877,6 +7976,96 @@ with tab17:
                 "ao longo do tempo. O Customizado tem pesos fixos (turnover zero) por definição, "
                 "mas não se adapta a mudanças de mercado."
             )
+
+            # ══════════════════════════════════════════════════════════════════
+            # ── BOOTSTRAP — intervalo de confiança dos pesos HRP ───────────────
+            # ══════════════════════════════════════════════════════════════════
+            st.divider()
+            st.markdown("<div class='section-title'>bootstrap — quão confiáveis são os pesos?</div>",
+                        unsafe_allow_html=True)
+            st.markdown(
+                "Recalcula o HRP **centenas de vezes** com reamostragens aleatórias dos "
+                "retornos. Em vez de um número único (IDkA = 23%), você vê a **distribuição** "
+                "do peso (23% mais ou menos 4%). Pesos com intervalo estreito são confiáveis; "
+                "largos merecem cautela."
+            )
+
+            n_boot = st.select_slider(
+                "Número de reamostragens (bootstrap)",
+                options=[100, 200, 500, 1000], value=200, key="estab_nboot",
+                help="Mais reamostragens = estimativa mais precisa, porém mais lento."
+            )
+
+            if st.button("▶ Rodar bootstrap dos pesos", key="btn_bootstrap"):
+                with st.spinner(f"Recalculando HRP {n_boot} vezes com reamostragens..."):
+                    pesos_boot = {c["name"]: [] for c in ASSET_CFG}
+                    n_obs = len(ret_est_df)
+                    rng = np.random.default_rng(42)
+                    for _ in range(n_boot):
+                        # Reamostragem com reposição (block bootstrap simples)
+                        idx_boot = rng.integers(0, n_obs, size=n_obs)
+                        amostra = ret_est_df.iloc[idx_boot]
+                        try:
+                            w_b = compute_hrp(amostra)
+                            for c in ASSET_CFG:
+                                pesos_boot[c["name"]].append(float(w_b.get(c["name"], 0))*100)
+                        except Exception:
+                            pass
+
+                    # Montar tabela de distribuição
+                    boot_rows = []
+                    for c in ASSET_CFG:
+                        vals = pd.Series(pesos_boot[c["name"]])
+                        if len(vals) > 0:
+                            boot_rows.append({
+                                "Ativo": c["name"],
+                                "Peso médio": f"{vals.mean():.1f}%",
+                                "Desvio": f"±{vals.std():.1f}%",
+                                "Mínimo": f"{vals.quantile(0.05):.1f}%",
+                                "Máximo": f"{vals.quantile(0.95):.1f}%",
+                                "Confiabilidade": ("🟢 Alta" if vals.std() < 2 else
+                                                   "🟡 Média" if vals.std() < 5 else
+                                                   "🔴 Baixa"),
+                            })
+                    df_boot = pd.DataFrame(boot_rows).set_index("Ativo")
+                    st.dataframe(df_boot, use_container_width=True)
+
+                    # Gráfico: barras com intervalo de confiança
+                    fig_boot = go.Figure()
+                    nomes_b = [c["name"] for c in ASSET_CFG]
+                    medias_b = [pd.Series(pesos_boot[c["name"]]).mean() for c in ASSET_CFG]
+                    erros_b = [pd.Series(pesos_boot[c["name"]]).std() for c in ASSET_CFG]
+                    fig_boot.add_trace(go.Bar(
+                        x=nomes_b, y=[round(m,1) for m in medias_b],
+                        error_y=dict(type="data", array=[round(e,1) for e in erros_b], visible=True),
+                        marker_color=[c["color"] for c in ASSET_CFG],
+                        hovertemplate="%{x}<br>%{y:.1f}% ± erro<extra></extra>"))
+                    fig_boot.update_layout(
+                        plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
+                        height=320, font=dict(color="#1a1a18"),
+                        margin=dict(l=0, r=0, t=8, b=0),
+                        xaxis=dict(tickfont=dict(color="#444441", size=10), color="#1a1a18"),
+                        yaxis=dict(title="Peso (%)", ticksuffix="%", gridcolor="#e8e6e0",
+                                   tickfont=dict(color="#444441"), color="#1a1a18"),
+                    )
+                    st.plotly_chart(fig_boot, use_container_width=True)
+
+                    # Insight
+                    desvios = {c["name"]: pd.Series(pesos_boot[c["name"]]).std() for c in ASSET_CFG}
+                    mais_incerto = max(desvios, key=desvios.get)
+                    mais_certo = min(desvios, key=desvios.get)
+                    st.info(
+                        f"📊 O peso mais **confiável** é o do **{mais_certo}** "
+                        f"(±{desvios[mais_certo]:.1f}%) — muda pouco entre reamostragens. "
+                        f"O mais **incerto** é o do **{mais_incerto}** (±{desvios[mais_incerto]:.1f}%) "
+                        f"— mais sensível à amostra específica, merece acompanhamento. "
+                        f"Pesos robustos são a marca de um modelo confiável."
+                    )
+                    st.caption(
+                        "Bootstrap: reamostra os retornos com reposição e recalcula o HRP a cada "
+                        "vez. O intervalo [Mínimo, Máximo] é o percentil 5-95% (90% de confiança). "
+                        "Desvio pequeno = peso estável independente da amostra = mais confiável."
+                    )
       except Exception as _e_estab:
         st.error(f"Erro ao calcular estabilidade: {_e_estab}")
         import traceback
