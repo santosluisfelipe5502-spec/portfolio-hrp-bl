@@ -280,12 +280,12 @@ ULTIMO_RECALCULO_HRP = "2026-09-01"   # formato: AAAA-MM-DD
 INTERVALO_RECALCULO_MESES = 6         # periodicidade do recálculo
 
 ASSET_CFG = [
-    {"name": "IDkA Pré 5A","key": "IDKAPRE5",   "color": "#E24B4A", "cluster": "Renda fixa", "w": 0.230, "vol": 0.06},
-    {"name": "IMA-B5",     "key": "IMAB5",      "color": "#1D9E75", "cluster": "Renda fixa", "w": 0.090, "vol": 0.05},
-    {"name": "IMA-B5+",    "key": "IMAB5MAIS",  "color": "#0F6E56", "cluster": "Renda fixa", "w": 0.078, "vol": 0.09},
-    {"name": "IDkA Pré 2A","key": "IDKAPRE2",   "color": "#C94F9E", "cluster": "Renda fixa", "w": 0.080, "vol": 0.03},
-    {"name": "IHFA",       "key": "IHFA",       "color": "#378ADD", "cluster": "Âncora",     "w": 0.150, "vol": 0.06},
-    {"name": "IDA-DI",     "key": "IDADI",      "color": "#888780", "cluster": "Âncora",     "w": 0.130, "vol": 0.02},
+    {"name": "IDkA Pré 5A","key": "IDKAPRE5",   "color": "#E24B4A", "cluster": "Prefixado", "w": 0.230, "vol": 0.06},
+    {"name": "IMA-B5",     "key": "IMAB5",      "color": "#1D9E75", "cluster": "IPCA", "w": 0.090, "vol": 0.05},
+    {"name": "IMA-B5+",    "key": "IMAB5MAIS",  "color": "#0F6E56", "cluster": "IPCA", "w": 0.078, "vol": 0.09},
+    {"name": "IDkA Pré 2A","key": "IDKAPRE2",   "color": "#C94F9E", "cluster": "Prefixado", "w": 0.080, "vol": 0.03},
+    {"name": "IHFA",       "key": "IHFA",       "color": "#378ADD", "cluster": "Multimercado", "w": 0.150, "vol": 0.06},
+    {"name": "IDA-DI",     "key": "IDADI",      "color": "#888780", "cluster": "Pós-fixado", "w": 0.130, "vol": 0.02},
     {"name": "Ibovespa",   "key": "IBOV",       "color": "#BA7517", "cluster": "Equity",     "w": 0.115, "vol": 0.24},
     {"name": "Internac.",  "key": "INTL",       "color": "#7F77DD", "cluster": "Equity",     "w": 0.070, "vol": 0.184},
     {"name": "Ouro",       "key": "GOLD",       "color": "#D4AF37", "cluster": "Alternativos","w": 0.037, "vol": 0.15},
@@ -1641,7 +1641,8 @@ try:
         if len(rets_check) > 0:
             extremos = rets_check[(rets_check.abs() > 0.80)]
             # Bitcoin/Ouro podem ter movimentos grandes; renda fixa não
-            if cfg["cluster"] == "Renda fixa" and len(rets_check[rets_check.abs() > 0.15]) > 0:
+            _clusters_rf = ["Pós-fixado", "Prefixado", "IPCA"]
+            if cfg["cluster"] in _clusters_rf and len(rets_check[rets_check.abs() > 0.15]) > 0:
                 mes_susp = rets_check[rets_check.abs() > 0.15].index[0]
                 _avisos_dados.append(
                     f"**{nome}**: variação mensal suspeita em {mes_susp.strftime('%b/%Y')} "
@@ -2633,21 +2634,21 @@ um risco oculto. A aba serve para trazer essas exposições à luz, não para pr
     # ── Seção 2: Os Ativos ────────────────────────────────────────────────────
     with st.expander("📦 Os ativos da carteira", expanded=False):
         ativos_info = [
-            ("IDkA Pré 5A", "Renda fixa", "#E24B4A", "23.0%", "ANBIMA",
+            ("IDkA Pré 5A", "Prefixado", "#E24B4A", "23.0%", "ANBIMA",
              "Índice de Duração Constante ANBIMA **prefixado com duration fixa de 5 anos**. "
              "Captura a parte média da curva prefixada — mais sensível a juros que o Pré 2A. "
              "Junto com o IDkA Pré 2A, permite apostar na inclinação da curva de juros."),
-            ("IMA-B5", "Renda fixa", "#1D9E75", "10.0%", "ANBIMA",
+            ("IMA-B5", "IPCA", "#1D9E75", "10.0%", "ANBIMA",
              "Índice de NTN-B com vencimento **até 5 anos** — duration curta (~3 anos). "
              "Protege contra inflação com menor sensibilidade a juro real que o IMA-B5+."),
-            ("IMA-B5+", "Renda fixa", "#0F6E56", "8.8%", "ANBIMA",
+            ("IMA-B5+", "IPCA", "#0F6E56", "8.8%", "ANBIMA",
              "Índice de NTN-B com vencimento **acima de 5 anos** — duration longa (~10 anos). "
              "Protege contra inflação mas é muito sensível a movimentos na curva de juros reais."),
-            ("IHFA", "Âncora", "#378ADD", "17.2%", "ANBIMA",
+            ("IHFA", "Multimercado", "#378ADD", "17.2%", "ANBIMA",
              "Índice de **fundos multimercado** brasileiros. "
              "Representa a capacidade dos gestores de gerar alpha independente "
              "do ciclo de mercado. Tem correlação baixa com os demais ativos."),
-            ("IDA-DI", "Âncora", "#888780", "14.4%", "ANBIMA",
+            ("IDA-DI", "Pós-fixado", "#888780", "14.4%", "ANBIMA",
              "Índice de **debêntures atreladas ao CDI** (crédito privado pós-fixado). "
              "Entrega CDI + spread de crédito. O spread abre em momentos de stress "
              "(ex: caso Americanas) — capturando o risco de crédito do mercado corporativo."),
@@ -2659,7 +2660,7 @@ um risco oculto. A aba serve para trazer essas exposições à luz, não para pr
              "**40% SPY** (S&P 500) + **60% TLT** (Treasuries 20 anos), convertidos para BRL via PTAX. "
              "Diversificação geográfica e proteção cambial — quando o Brasil vai mal, "
              "o dólar sobe e amplifica o retorno desta parcela em reais."),
-            ("IDkA Pré 2A", "Renda fixa", "#C94F9E", "8.0%", "ANBIMA",
+            ("IDkA Pré 2A", "Prefixado", "#C94F9E", "8.0%", "ANBIMA",
              "Índice de Duração Constante ANBIMA **prefixado com duration fixa de 2 anos**. "
              "Duration fixa de 2 anos — captura a parte curta da curva prefixada. "
              "exposição controlada e estável a juros prefixados de curto prazo."),
