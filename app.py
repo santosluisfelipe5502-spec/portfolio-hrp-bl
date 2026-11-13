@@ -3,10 +3,9 @@ import pandas as pd
 import numpy as np
 import requests
 import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 from datetime import datetime, date
-import io, warnings
+import io, warnings, os, glob, json, time, traceback
+from scipy.optimize import minimize
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import squareform
 from reportlab.lib.pagesizes import A4
@@ -14,7 +13,7 @@ from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, HRFlowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER
 
 # ── Layout padrão Plotly (não usado diretamente — inline em cada gráfico) ──
 _UNUSED = dict(
@@ -50,6 +49,28 @@ _UNUSED = dict(
     margin=dict(l=0, r=0, t=8, b=0),
 )
 warnings.filterwarnings("ignore")
+
+class _FonteIndisponivel(Exception):
+    """Levantada dentro de funções cacheadas quando a fonte falha: exceções NÃO
+    ficam no cache, então a próxima execução tenta buscar de novo."""
+
+def _assinatura_dados():
+    """Assinatura (caminho, data de modificação, tamanho) dos arquivos de dados do
+    repositório. Usada como chave de cache: ao subir uma base nova no GitHub, a
+    assinatura muda e o dashboard relê os arquivos sozinho (sem precisar de Reboot)."""
+    sig = []
+    for base in ("dados", "data", "."):
+        if not os.path.isdir(base):
+            continue
+        for padrao in ("*.xls", "*.xlsx", "*.csv"):
+            for path in glob.glob(os.path.join(base, padrao)):
+                try:
+                    s = os.stat(path)
+                    sig.append((path, s.st_mtime, s.st_size))
+                except OSError:
+                    pass
+    return tuple(sorted(sig))
+
 
 def hex_to_rgba(hex_color, alpha=0.5):
     """Converte cor hex para rgba com transparência (fundo claro legível)."""
@@ -299,7 +320,6 @@ def compute_markowitz_frontier(returns_df, n_points=40, allow_short=False):
     Retorna lista de portfólios ótimos (retorno, vol, pesos) ao longo da fronteira.
     returns_df: DataFrame de retornos mensais dos ativos.
     """
-    from scipy.optimize import minimize
 
     mu = returns_df.mean().values * 12          # retorno anualizado
     cov = returns_df.cov().values * 12          # covariância anualizada
@@ -343,7 +363,6 @@ def compute_markowitz_frontier(returns_df, n_points=40, allow_short=False):
 
 def markowitz_min_vol(returns_df, allow_short=False):
     """Portfólio de mínima variância global."""
-    from scipy.optimize import minimize
     cov = returns_df.cov().values * 12
     n = cov.shape[0]
     def port_vol(w):
@@ -358,7 +377,6 @@ def markowitz_min_vol(returns_df, allow_short=False):
 
 def markowitz_max_sharpe(returns_df, rf_annual=0.0, allow_short=False):
     """Portfólio de máximo Sharpe (tangente)."""
-    from scipy.optimize import minimize
     mu = returns_df.mean().values * 12
     cov = returns_df.cov().values * 12
     n = len(mu)
@@ -376,7 +394,6 @@ def markowitz_max_sharpe(returns_df, rf_annual=0.0, allow_short=False):
 
 def markowitz_target_vol(returns_df, target_vol_annual, allow_short=False):
     """Portfólio de máximo retorno para uma volatilidade alvo."""
-    from scipy.optimize import minimize
     mu = returns_df.mean().values * 12
     cov = returns_df.cov().values * 12
     n = len(mu)
@@ -494,7 +511,7 @@ COLORS  = {a["name"]: a["color"] for a in ASSET_CFG}
 
 # ── Funções utilitárias ──────────────────────────────────────────────────────
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_bcb_serie(serie_id, divisor=1.0, max_retries=3, timeout=30):
+def _fetch_bcb_serie_cache(serie_id, divisor=1.0, max_retries=2, timeout=20):
     """Busca qualquer série do SGS/BCB com retry automático e timeout generoso."""
     urls = [
         f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie_id}/dados?formato=json",
@@ -518,9 +535,16 @@ def fetch_bcb_serie(serie_id, divisor=1.0, max_retries=3, timeout=30):
                         return df
             except Exception:
                 if attempt < max_retries - 1:
-                    import time; time.sleep(2)
+                    time.sleep(1)
                 continue
-    return None
+    raise _FonteIndisponivel('fetch_bcb_serie')
+
+def fetch_bcb_serie(*args, **kwargs):
+    """Versão pública: devolve None se a fonte falhar (sem cachear a falha)."""
+    try:
+        return _fetch_bcb_serie_cache(*args, **kwargs)
+    except _FonteIndisponivel:
+        return None
 
 def fetch_cdi():
     """Busca CDI mensal via API do Banco Central (SGS 4391)."""
@@ -539,7 +563,7 @@ def fetch_ipca():
     return None
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_ptax():
+def _fetch_ptax_cache():
     """Busca PTAX mensal (fechamento USD/BRL) via API do Banco Central.
     Tenta múltiplas séries e endpoints para maior robustez.
     """
@@ -562,7 +586,6 @@ def fetch_ptax():
 
     # Estratégia 3: Olinda PTAX API (endpoint diferente)
     try:
-        import json
         url_olinda = (
             "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
             "CotacaoMoedaMensal(codigoMoeda=@codigoMoeda,competenciaInicio=@competenciaInicio,"
@@ -584,10 +607,17 @@ def fetch_ptax():
     except Exception:
         pass
 
-    return None
+    raise _FonteIndisponivel('fetch_ptax')
+
+def fetch_ptax(*args, **kwargs):
+    """Versão pública: devolve None se a fonte falhar (sem cachear a falha)."""
+    try:
+        return _fetch_ptax_cache(*args, **kwargs)
+    except _FonteIndisponivel:
+        return None
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_yfinance(ticker, start="2002-01-01"):
+def _fetch_yfinance_cache(ticker, start="2002-01-01"):
     """Busca série mensal de qualquer ticker via yfinance.
     Funciona para SPY, TLT, ^BVSP e outros.
     """
@@ -596,17 +626,24 @@ def fetch_yfinance(ticker, start="2002-01-01"):
         df = yf.download(ticker, start=start, interval="1mo",
                          auto_adjust=True, progress=False)
         if df is None or len(df) == 0:
-            return None
+            raise _FonteIndisponivel('fetch_yfinance')
         close = df["Close"].squeeze()
         close.index = close.index + pd.offsets.MonthEnd(0)
         close.index = close.index.tz_localize(None)
         result = pd.DataFrame({"valor": close.values}, index=close.index)
         return result.dropna().sort_index()
     except Exception:
+        raise _FonteIndisponivel('fetch_yfinance')
+
+def fetch_yfinance(*args, **kwargs):
+    """Versão pública: devolve None se a fonte falhar (sem cachear a falha)."""
+    try:
+        return _fetch_yfinance_cache(*args, **kwargs)
+    except _FonteIndisponivel:
         return None
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_fatores_macro():
+def _fetch_fatores_macro_cache():
     """Busca os fatores macro para a análise econométrica.
     Retorna um DataFrame mensal com os NÍVEIS de cada fator.
     Fontes: Yahoo Finance (globais) e BCB (Brasil).
@@ -647,9 +684,16 @@ def fetch_fatores_macro():
             pass
 
     if not fatores:
-        return None
+        raise _FonteIndisponivel('fetch_fatores_macro')
     df_fat = pd.DataFrame(fatores)
     return df_fat
+
+def fetch_fatores_macro(*args, **kwargs):
+    """Versão pública: devolve None se a fonte falhar (sem cachear a falha)."""
+    try:
+        return _fetch_fatores_macro_cache(*args, **kwargs)
+    except _FonteIndisponivel:
+        return None
 
 def _ler_bba_xlsx(path):
     """Garimpa as projeções macro da planilha ORIGINAL do Itaú BBA (formato
@@ -704,13 +748,12 @@ def _ler_bba_xlsx(path):
                         pass
     return proj if proj else None
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_projecoes_bba():
+@st.cache_data(show_spinner=False)
+def _load_projecoes_bba_cache(assinatura):
     """Lê as projeções macro do Itaú BBA do repositório. Aceita DOIS formatos:
     1. A planilha ORIGINAL do BBA (brazil_long_term_forecasts*.xlsx) — leitura direta
     2. Um CSV simplificado (projecoes_bba.csv) com colunas ano/indicador/valor
     Retorna dict {ano: {indicador: valor}} ou None."""
-    import os, glob
     # Formato 1: planilha original do BBA (qualquer nome com "long_term" ou "bba")
     for base in ["dados", "data", "."]:
         if not os.path.isdir(base):
@@ -740,6 +783,9 @@ def load_projecoes_bba():
                 except Exception:
                     continue
     return None
+
+def load_projecoes_bba():
+    return _load_projecoes_bba_cache(_assinatura_dados())
 
 def read_uploaded(file):
     """Lê XLS/XLSX/CSV em DataFrame com duas colunas: data, valor.
@@ -829,9 +875,6 @@ def to_monthly(df):
         return df  # já é mensal
     return df.resample("ME").last()
 
-def to_daily(df):
-    """Mantém série em frequência diária, sem agregar."""
-    return df if df is not None else None
 
 def calc_intl(spy_df, tlt_df, w_spy=0.40, w_tlt=0.60, ptax_df=None):
     """Calcula índice Internacional combinado.
@@ -1071,11 +1114,10 @@ with st.sidebar:
 
 # ── Carga de dados ────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
-def load_from_repo(filename):
+def _load_from_repo_cache(filename, assinatura):
     """Tenta carregar arquivo da pasta dados/ do repositório.
     Suporta múltiplas extensões e variações de nome automaticamente.
     """
-    import os
     bases = ["dados", "data", "."]
     exts  = ["", ".csv", ".xls", ".xlsx"]
     # Testar variações do nome para robustez (ex: IDkA com/sem "A" final)
@@ -1120,6 +1162,9 @@ def load_from_repo(filename):
                 except Exception:
                     continue
     return None, None
+
+def load_from_repo(filename):
+    return _load_from_repo_cache(filename, _assinatura_dados())
 
 def read_from_df(df, path):
     """Converte DataFrame bruto para série (data, valor) usando o mesmo
@@ -1441,6 +1486,9 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
     start_ts = pd.Timestamp(start_date) + pd.offsets.MonthEnd(0)
     end_ts   = pd.Timestamp(end_date)   + pd.offsets.MonthEnd(0)
     port_ret, cdi_aligned, common_idx = align_and_compute(series, cdi_raw, str(start_ts)[:10], str(end_ts)[:10])
+    # Retornos mensais de cada ativo no período comum — calculados uma única vez
+    RETS_MENSAIS = {a["name"]: series[a["name"]]["valor"].pct_change().dropna()
+                    .reindex(common_idx).ffill().fillna(0) for a in ASSET_CFG}
     ibov_ret = series["Ibovespa"]["valor"].pct_change().dropna().reindex(common_idx).ffill()
 
     # ── Calcular pesos do perfil selecionado ──────────────────────────────────
@@ -1562,7 +1610,6 @@ with col_h1:
     intl_src = "📡 SPY+TLT via Yahoo" if _spy_ok else "📂 SPY+TLT local"
     real_tag = "📂 dados reais" if has_real else "🔬 dados simulados"
     # Verificar se veio do repo
-    import os
     repo_ok = os.path.exists("dados") or any(
         os.path.exists(f) for f in ["IHFA.xls","IHFA.xlsx","IHFA.csv","dados/IHFA.xls"]
     )
@@ -1583,20 +1630,6 @@ with col_h1:
     """, unsafe_allow_html=True)
 
     # ── PAINEL DE DIAGNÓSTICO TEMPORÁRIO ──────────────────────────────────────
-    with st.expander("🔧 Diagnóstico de dados (temporário)", expanded=True):
-        st.markdown("**O que cada ativo carregou (início → fim, nº de pontos):**")
-        for _linha in st.session_state.get("_diag_series", []):
-            st.markdown(f"<span style='font-family:monospace;font-size:12px'>{_linha}</span>",
-                        unsafe_allow_html=True)
-        st.caption("Ativos ANBIMA que terminam em 'Apr/2026' com 208 pts = dados SIMULADOS "
-                   "(arquivo não lido). Se terminam em 'Sep/2026' = dados REAIS. "
-                   "Ibovespa/Internac./Ouro/Bitcoin vêm do Yahoo e podem variar.")
-
-        st.markdown("---")
-        st.markdown("**Detalhe da leitura dos arquivos ANBIMA:**")
-        for _n, _msg in st.session_state.get("_diag_load", {}).items():
-            st.markdown(f"<span style='font-family:monospace;font-size:11px'>"
-                        f"<b>{_n}</b>: {_msg}</span>", unsafe_allow_html=True)
 with col_h2:
     perfil_badge_cor = {
         "HRP+BL Original": "badge-blue",
@@ -1661,7 +1694,6 @@ except Exception:
 
 # ── Alerta de recálculo HRP (semestral) ───────────────────────────────────────
 try:
-    from datetime import datetime as _dt
     _ult_recalc = pd.Timestamp(ULTIMO_RECALCULO_HRP)
     _hoje_alerta = pd.Timestamp.now().normalize()
     _meses_desde = (_hoje_alerta.year - _ult_recalc.year) * 12 + (_hoje_alerta.month - _ult_recalc.month)
@@ -1792,7 +1824,7 @@ custom_valid_hdr = abs(total_cw_hdr - 1.0) < 0.02
 
 if custom_valid_hdr:
     c_ret = sum(
-        custom_w_hdr[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
+        custom_w_hdr[a["name"]] * RETS_MENSAIS[a["name"]]
         for a in ASSET_CFG
     )
     c_cum = (1 + c_ret).cumprod() * 100
@@ -2830,12 +2862,12 @@ with tab1:
     custom_valid = abs(total_custom - 1.0) < 0.02
 
     # Calcular portfólio customizado
-    custom_ret = sum(custom_w[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
+    custom_ret = sum(custom_w[a["name"]] * RETS_MENSAIS[a["name"]]
                      for a in ASSET_CFG)
     custom_cum = (1 + custom_ret).cumprod() * 100
 
     # Calcular 1/N
-    eq_ret = sum((1/len(ASSET_CFG)) * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
+    eq_ret = sum((1/len(ASSET_CFG)) * RETS_MENSAIS[a["name"]]
                  for a in ASSET_CFG)
     eq_cum = (1 + eq_ret).cumprod() * 100
 
@@ -2957,7 +2989,7 @@ with tab1:
                    hoverformat=".1f"),
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # ── Nota sobre portfólio customizado ──
     if show_custom and custom_valid:
@@ -3027,7 +3059,7 @@ with tab1:
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
         yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
     # ── Distribuição dos retornos (histograma sobreposto) ─────────────────────
     st.divider()
@@ -3085,7 +3117,7 @@ with tab1:
         yaxis=dict(title="Frequência (meses)", gridcolor="#e8e6e0",
                    tickfont=dict(color="#444441"), color="#1a1a18"),
     )
-    st.plotly_chart(fig_dist, use_container_width=True)
+    st.plotly_chart(fig_dist, width="stretch")
 
     # Tabela resumo: média, desvio e amplitude de cada distribuição
     rows_dist = []
@@ -3101,7 +3133,7 @@ with tab1:
             "Máximo":      f"{vals.max():.1f}%",
         })
     df_dist = pd.DataFrame(rows_dist).set_index("Série")
-    st.dataframe(df_dist, use_container_width=True)
+    st.dataframe(df_dist, width="stretch")
     st.caption(
         "Retorno anualizado = (1 + retorno mensal)¹² − 1. O desvio indica a dispersão "
         "(volatilidade); mínimo e máximo mostram os piores e melhores meses do período "
@@ -3202,7 +3234,7 @@ with tab2:
                    color="#1a1a18", ticksuffix="%"),
         height=320,
     )
-    st.plotly_chart(fig_dd, use_container_width=True)
+    st.plotly_chart(fig_dd, width="stretch")
 
     # ── Métricas comparativas ──
     dd_max_port = dd_port_f.min()
@@ -3273,7 +3305,7 @@ with tab3:
                 f"+{_acum_mk2:.1f}%",
             ]
 
-    st.dataframe(df_metrics, use_container_width=True)
+    st.dataframe(df_metrics, width="stretch")
 
     st.caption(
         f"IPCA puro: IPCA mensal via BCB (fonte: {ipca_src}) + 6% a.a. | "
@@ -3288,7 +3320,7 @@ with tab3:
         "Vol. hist.": f"{a['vol']*100:.1f}%",
         "Contrib. risco": f"{a['w']*a['vol'] / sum(x['w']*x['vol'] for x in ASSET_CFG)*100:.1f}%",
     } for a in ASSET_CFG])
-    st.dataframe(alloc_df, use_container_width=True, hide_index=True)
+    st.dataframe(alloc_df, width="stretch", hide_index=True)
 
     # ── Exportação PDF ───────────────────────────────────────────────────────
     st.divider()
@@ -3304,7 +3336,6 @@ with tab3:
             with st.spinner("Gerando relatório..."):
                 try:
                     # Montar dados para o PDF
-                    from datetime import datetime
 
                     # Eventos de cauda — calcular retorno em cada evento
                     eventos_pdf = []
@@ -3527,7 +3558,6 @@ with tab3:
         if st.button("Gerar PDF — Cliente", key="btn_pdf_cliente", type="primary"):
             with st.spinner("Gerando relatório..."):
                 try:
-                    from datetime import datetime
 
                     dados_pdf_cli = {
                         "periodo":      f"{common_idx[0].strftime('%b/%Y')} → {common_idx[-1].strftime('%b/%Y')}",
@@ -3693,7 +3723,7 @@ with tab4:
                                                 "✅ Manter",
                             })
                         df_hrp = pd.DataFrame(rows_hrp).set_index("Ativo")
-                        st.dataframe(df_hrp, use_container_width=True)
+                        st.dataframe(df_hrp, width="stretch")
 
                         # Gráfico comparativo
                         fig_hrp = go.Figure()
@@ -3725,7 +3755,7 @@ with tab4:
                                        tickfont=dict(color="#444441",size=11),
                                        color="#1a1a18"),
                         )
-                        st.plotly_chart(fig_hrp, use_container_width=True)
+                        st.plotly_chart(fig_hrp, width="stretch")
 
                         st.info(
                             f"💡 Para aplicar os novos pesos: ajuste os campos abaixo "
@@ -3765,7 +3795,7 @@ with tab4:
                               "✅ Manteve",
         })
     df_pesos = pd.DataFrame(rows_pesos).set_index("Ativo")
-    st.dataframe(df_pesos, use_container_width=True)
+    st.dataframe(df_pesos, width="stretch")
 
     if perfil_sel != "HRP+BL Original":
         # Gráfico comparativo de pesos
@@ -3795,7 +3825,7 @@ with tab4:
             yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
                        tickfont=dict(color="#444441",size=11), color="#1a1a18"),
         )
-        st.plotly_chart(fig_pesos_comp, use_container_width=True)
+        st.plotly_chart(fig_pesos_comp, width="stretch")
 
         # Vol calculada do perfil
         try:
@@ -3883,7 +3913,7 @@ with tab4:
         yaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"), 
         height=260,
     )
-    st.plotly_chart(fig_drift, use_container_width=True)
+    st.plotly_chart(fig_drift, width="stretch")
 
     fora = [d for d in drift_data if d["Fora da banda"]]
     if fora:
@@ -3903,7 +3933,7 @@ with tab4:
                 "Volume (R$)": f"R$ {vol_fin:,.0f}",
                 "Custo est. (R$)": f"R$ {custo:,.0f}",
             })
-        st.dataframe(pd.DataFrame(trade_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(trade_rows), width="stretch", hide_index=True)
         custo_total = sum(abs(d["Drift"]/100)*pat_reais*custo_op for d in fora)
         st.info(f"💡 Custo total estimado de rebalanceamento: **R$ {custo_total:,.0f}** (0.10% sobre volume negociado)")
     else:
@@ -4286,7 +4316,7 @@ with tab5:
                     showgrid=False, range=[0, 50]),
         barmode="group",
     )
-    st.plotly_chart(fig_sc, use_container_width=True)
+    st.plotly_chart(fig_sc, width="stretch")
     st.caption("Barras = retorno esperado de cada ativo no cenário. Linhas = peso de cada carteira (eixo direito).")
 
     # ── Alerta final ──
@@ -4343,7 +4373,7 @@ with tab5:
         df_comp_sc = pd.concat([df_comp_sc,
                                  pd.DataFrame([total_row])],
                                 ignore_index=True)
-        st.dataframe(df_comp_sc, use_container_width=True, hide_index=True)
+        st.dataframe(df_comp_sc, width="stretch", hide_index=True)
 
         # Gráfico de contribuição comparativa
         fig_contrib = go.Figure()
@@ -4371,7 +4401,7 @@ with tab5:
                        tickfont=dict(color="#444441", size=11), color="#1a1a18",
                        title="Contribuição ao retorno (%)"),
         )
-        st.plotly_chart(fig_contrib, use_container_width=True)
+        st.plotly_chart(fig_contrib, width="stretch")
         st.caption("Contribuição = peso × retorno esperado do ativo no cenário. "
                    "Diferenças mostram onde os pesos customizados apostam diferente do HRP+BL.")
 
@@ -4479,7 +4509,7 @@ with tab5:
                                           "✅ Manter",
                     })
                 df_bl = pd.DataFrame(rows_bl).set_index("Ativo")
-                st.dataframe(df_bl, use_container_width=True)
+                st.dataframe(df_bl, width="stretch")
 
                 # KPIs comparativos
                 k1, k2, k3 = st.columns(3)
@@ -4516,7 +4546,7 @@ with tab5:
                     yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
                                tickfont=dict(color="#444441",size=11), color="#1a1a18"),
                 )
-                st.plotly_chart(fig_bl, use_container_width=True)
+                st.plotly_chart(fig_bl, width="stretch")
 
                 # Botão para aplicar como customizado
                 pesos_str = " | ".join([
@@ -4603,7 +4633,7 @@ with tab6:
         custom_w_ev[cfg["name"]] = st.session_state.get(key, cfg["w"] * 100) / 100
 
     custom_ret_ev = sum(
-        custom_w_ev[a["name"]] * series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
+        custom_w_ev[a["name"]] * RETS_MENSAIS[a["name"]]
         for a in ASSET_CFG
     )
     custom_cum_ev = (1 + custom_ret_ev).cumprod() * 100
@@ -4626,7 +4656,7 @@ with tab6:
         r_cdi  = period_ret(cdi_cum,     ev["start"], ev["end"])
         r_ibov = period_ret(ibov_cum,    ev["start"], ev["end"])
         r_cust = period_ret(custom_cum_ev, ev["start"], ev["end"])
-        eq_cum_ev = (1 + sum((1/len(ASSET_CFG))*series[a["name"]]["valor"].pct_change().dropna().reindex(common_idx).ffill().fillna(0)
+        eq_cum_ev = (1 + sum((1/len(ASSET_CFG))*RETS_MENSAIS[a["name"]]
                               for a in ASSET_CFG)).cumprod() * 100
         r_igual = period_ret(eq_cum_ev, ev["start"], ev["end"])
 
@@ -4644,7 +4674,7 @@ with tab6:
         rows_ev.append(row)
 
     df_ev = pd.DataFrame(rows_ev)
-    st.dataframe(df_ev, use_container_width=True, hide_index=True)
+    st.dataframe(df_ev, width="stretch", hide_index=True)
 
     st.divider()
 
@@ -4682,7 +4712,7 @@ with tab6:
                    tickfont=dict(color="#444441", size=11), color="#1a1a18",
                    zeroline=True, zerolinecolor="#888780"),
     )
-    st.plotly_chart(fig_ev, use_container_width=True)
+    st.plotly_chart(fig_ev, width="stretch")
 
     st.divider()
 
@@ -4727,7 +4757,7 @@ with tab6:
         yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18", hoverformat=".1f"),
         xaxis=dict(gridcolor="#e8e6e0", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
-    st.plotly_chart(fig_ev2, use_container_width=True)
+    st.plotly_chart(fig_ev2, width="stretch")
 
     # ── Legenda dos eventos ──
     st.markdown("<div class='section-title'>legenda dos eventos</div>", unsafe_allow_html=True)
@@ -4827,7 +4857,7 @@ with tab6:
 
         if rows_pos_crise:
             df_pos = pd.DataFrame(rows_pos_crise).set_index("Evento")
-            st.dataframe(df_pos, use_container_width=True)
+            st.dataframe(df_pos, width="stretch")
 
             # ── Insight automático ────────────────────────────────────────────
             # Contar quantas vezes HRP+BL bateu o CDI nas janelas
@@ -4976,7 +5006,7 @@ with tab7:
         xaxis=dict(gridcolor="#e8e6e0",
                    tickfont=dict(color="#444441", size=11), color="#1a1a18"),
     )
-    st.plotly_chart(fig_at, use_container_width=True)
+    st.plotly_chart(fig_at, width="stretch")
     st.caption(f"Rentabilidade acumulada a partir do início do período selecionado "
                f"({idx_at[0].strftime('%d/%m/%Y')}) = 0%. Cada linha mostra o retorno "
                f"percentual de cada ativo desde então. Frequência mensal.")
@@ -5014,7 +5044,7 @@ with tab7:
 
     if rows_at:
         df_at = pd.DataFrame(rows_at)
-        st.dataframe(df_at, use_container_width=True, hide_index=True)
+        st.dataframe(df_at, width="stretch", hide_index=True)
 
     st.divider()
 
@@ -5056,7 +5086,7 @@ with tab7:
             rows_imp.append(row_imp)
 
         df_imp = pd.DataFrame(rows_imp)
-        st.dataframe(df_imp, use_container_width=True, hide_index=True)
+        st.dataframe(df_imp, width="stretch", hide_index=True)
 
         # ── Análise comparativa automática ────────────────────────────────────
         st.markdown("<div class='section-title'>análise comparativa — eventos de cauda</div>",
@@ -5298,7 +5328,7 @@ with tab7:
         height=max(300, len(ativos_list)*42 + 80),
         margin=dict(l=0, r=0, t=8, b=0),
     )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width="stretch")
 
     # ── Legenda ───────────────────────────────────────────────────────────────
     leg_cols = st.columns(6)
@@ -5347,7 +5377,7 @@ with tab7:
         })
 
     df_resumo = pd.DataFrame(rows_resumo).set_index("Ativo")
-    st.dataframe(df_resumo, use_container_width=True)
+    st.dataframe(df_resumo, width="stretch")
 
 
 
@@ -5378,14 +5408,12 @@ with tab10:
     custom_valid_jm = abs(total_jm - 1.0) < 0.02
     if custom_valid_jm:
         c_ret_jm = sum(
-            custom_w_jm[a["name"]] * series[a["name"]]["valor"]
-            .pct_change().dropna().reindex(common_idx).ffill().fillna(0)
+            custom_w_jm[a["name"]] * RETS_MENSAIS[a["name"]]
             for a in ASSET_CFG
         )
 
     # 1/N igual
-    eq_ret_jm = sum((1/len(ASSET_CFG)) * series[a["name"]]["valor"]
-                    .pct_change().dropna().reindex(common_idx).ffill().fillna(0)
+    eq_ret_jm = sum((1/len(ASSET_CFG)) * RETS_MENSAIS[a["name"]]
                     for a in ASSET_CFG)
 
     def rolling_acum(ret_series, n):
@@ -5505,7 +5533,7 @@ with tab10:
                    zeroline=True, zerolinecolor="#888780",
                    title=f"Retorno acumulado {janela_meses} meses (%)"),
     )
-    st.plotly_chart(fig_jm, use_container_width=True)
+    st.plotly_chart(fig_jm, width="stretch")
 
     st.divider()
 
@@ -5531,7 +5559,7 @@ with tab10:
         })
 
     df_jm = pd.DataFrame(tbl_rows).set_index("Portfólio")
-    st.dataframe(df_jm, use_container_width=True)
+    st.dataframe(df_jm, width="stretch")
 
     st.divider()
 
@@ -5569,7 +5597,7 @@ with tab10:
                    tickfont=dict(color="#444441",size=11), color="#1a1a18",
                    title="Frequência"),
     )
-    st.plotly_chart(fig_hist_jm, use_container_width=True)
+    st.plotly_chart(fig_hist_jm, width="stretch")
 
     # Insight automático
     idx_c = roll_port.index.intersection(bench_series.index)
@@ -5900,7 +5928,7 @@ with tab11:
                                tickfont=dict(color="#444441",size=11), color="#1a1a18",
                                title="Retorno acumulado (%)"),
                 )
-                st.plotly_chart(fig_mc, use_container_width=True)
+                st.plotly_chart(fig_mc, width="stretch")
 
                 # ── Tabela de probabilidades ──────────────────────────────────
                 st.divider()
@@ -5929,7 +5957,7 @@ with tab11:
                     prob_rows.append(row)
 
                 df_mc_prob = pd.DataFrame(prob_rows).set_index("Horizonte")
-                st.dataframe(df_mc_prob, use_container_width=True)
+                st.dataframe(df_mc_prob, width="stretch")
 
                 # ── Histograma retorno final ──────────────────────────────────
                 st.divider()
@@ -5972,7 +6000,7 @@ with tab11:
                                tickfont=dict(color="#444441",size=11), color="#1a1a18",
                                title="Frequência"),
                 )
-                st.plotly_chart(fig_hist_mc, use_container_width=True)
+                st.plotly_chart(fig_hist_mc, width="stretch")
 
                 # ── Insight automático ────────────────────────────────────────
                 p_bate_cdi = (ret_final_hrp > ret_final_cdi).mean() * 100
@@ -5997,7 +6025,6 @@ with tab11:
 
             except Exception as e:
                 st.error(f"Erro na simulação: {e}")
-                import traceback
                 st.code(traceback.format_exc())
 
     else:
@@ -6092,7 +6119,7 @@ with tab12:
                        zeroline=True, zerolinecolor="#888780",
                        title="Contribuição mensal (%)"),
         )
-        st.plotly_chart(fig_atrib, use_container_width=True)
+        st.plotly_chart(fig_atrib, width="stretch")
 
     elif tipo_viz == "Contribuição acumulada":
         st.markdown("<div class='section-title'>contribuição acumulada por ativo (%)</div>",
@@ -6129,7 +6156,7 @@ with tab12:
                        tickfont=dict(color="#444441", size=11), color="#1a1a18",
                        title="Contribuição acumulada (%)"),
         )
-        st.plotly_chart(fig_acum, use_container_width=True)
+        st.plotly_chart(fig_acum, width="stretch")
 
     else:  # Heatmap mensal
         st.markdown("<div class='section-title'>heatmap de contribuição mensal por ativo</div>",
@@ -6169,7 +6196,7 @@ with tab12:
                        tickangle=-45),
             yaxis=dict(tickfont=dict(color="#444441", size=11), color="#1a1a18"),
         )
-        st.plotly_chart(fig_heat, use_container_width=True)
+        st.plotly_chart(fig_heat, width="stretch")
         st.caption("Verde = contribuição positiva | Vermelho = contribuição negativa | "
                    "Limitado aos últimos 36 meses para legibilidade.")
 
@@ -6209,7 +6236,7 @@ with tab12:
     })
 
     df_tbl_contrib = pd.DataFrame(rows_contrib).set_index("Ativo")
-    st.dataframe(df_tbl_contrib, use_container_width=True)
+    st.dataframe(df_tbl_contrib, width="stretch")
 
     st.divider()
 
@@ -6257,8 +6284,7 @@ with tab12:
     # Matriz de retornos e covariância (anualizada)
     ret_risk_dict = {}
     for cfg in ASSET_CFG:
-        r = (series[cfg["name"]]["valor"].pct_change().dropna()
-             .reindex(common_idx).ffill().fillna(0))
+        r = (RETS_MENSAIS[cfg["name"]])
         ret_risk_dict[cfg["name"]] = r
     ret_risk_df = pd.DataFrame(ret_risk_dict).dropna()
     cov_risk = ret_risk_df.cov().values * 12  # anualizada
@@ -6318,7 +6344,7 @@ with tab12:
             yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
                        tickfont=dict(color="#444441"), color="#1a1a18"),
         )
-        st.plotly_chart(fig_risk, use_container_width=True)
+        st.plotly_chart(fig_risk, width="stretch")
         st.caption(f"Volatilidade total do HRP+BL: {vol_hrp_total:.2f}% a.a. "
                    f"Quando a barra vermelha (risco) supera a azul (peso), o ativo "
                    f"contribui mais para o risco do que sua fatia sugere.")
@@ -6331,7 +6357,7 @@ with tab12:
         if pct is not None:
             tabela_risk[nome_modelo] = [f"{p:.1f}%" for p in pct]
     df_risk = pd.DataFrame(tabela_risk).set_index("Ativo")
-    st.dataframe(df_risk, use_container_width=True)
+    st.dataframe(df_risk, width="stretch")
 
     # ── Insights automáticos ──────────────────────────────────────────────────
     if pct_hrp is not None:
@@ -6410,7 +6436,6 @@ with tab14:
     # Usar a série SELIC ANUALIZADA do BCB (SGS 4390 = Selic acumulada no mês,
     # já em % a.a.). Isso elimina o problema de dias úteis/feriados.
     # Se falhar ou vier vazia, cai no fallback do CDI mensal anualizado.
-    @st.cache_data(ttl=3600)
     def _fetch_selic_meta():
         # Série 432 = Meta Selic do Copom (% a.a., diária).
         # É a taxa anual direta, muda em degraus quando o Copom decide.
@@ -6475,30 +6500,6 @@ with tab14:
                            "cdi_ini": cdi_suave[ini_idx],
                            "cdi_fim": cdi_suave[direcao.index[-1]]})
 
-    # ── DIAGNÓSTICO DETALHADO (temporário) ────────────────────────────────────
-    with st.expander("🔧 Diagnóstico detalhado (temporário)", expanded=True):
-        st.markdown(f"**Fonte da taxa:** {_fonte_juros}")
-        st.markdown(f"**cdi_para_ciclo:** {len(cdi_para_ciclo)} pontos · "
-                    f"NaN: {cdi_para_ciclo.isna().sum()}")
-        st.markdown(f"**cdi_anual_bruto:** {len(cdi_anual_bruto)} pontos · "
-                    f"NaN: {cdi_anual_bruto.isna().sum()}")
-        st.markdown(f"**cdi_suave:** {len(cdi_suave)} pontos · "
-                    f"NaN: {cdi_suave.isna().sum()}")
-        st.markdown(f"**variacao (diff 4):** min={variacao.min():.2f} · "
-                    f"max={variacao.max():.2f} · NaN: {variacao.isna().sum()}")
-        st.markdown(f"**direcao:** altas={int((direcao==1).sum())} · "
-                    f"cortes={int((direcao==-1).sum())} · "
-                    f"estável={int((direcao==0).sum())}")
-        st.markdown(f"**Ciclos detectados:** {len(ciclos)}")
-        if len(cdi_anual_bruto) > 0:
-            st.markdown("**Últimos 12 valores de cdi_anual_bruto:**")
-            _vals = []
-            for _d in cdi_anual_bruto.index[-12:]:
-                _v = cdi_anual_bruto[_d]
-                _vals.append(f"{_d.strftime('%b/%y')}={_v:.1f}" if pd.notna(_v) else f"{_d.strftime('%b/%y')}=NaN")
-            st.markdown(f"<span style='font-family:monospace;font-size:10px'>{' | '.join(_vals)}</span>",
-                        unsafe_allow_html=True)
-
     if not ciclos:
         st.info("Não foi possível detectar ciclos claros de juros no período.")
     else:
@@ -6541,25 +6542,7 @@ with tab14:
                        tickfont=dict(color="#444441"), color="#1a1a18",
                        title="Selic/CDI aprox. (% a.a.)"),
         )
-        st.plotly_chart(fig_cj, use_container_width=True)
-
-        # ── DIAGNÓSTICO TEMPORÁRIO DO CDI ─────────────────────────────────────
-        with st.expander("🔧 Diagnóstico taxa de juros (temporário)", expanded=True):
-            st.markdown(f"**Fonte:** {_fonte_juros}")
-            st.markdown("**Últimos 8 meses — Selic anualizada:**")
-            _diag_cdi = []
-            for _d in cdi_anual_bruto.index[-8:]:
-                _cdi_a = cdi_anual_bruto[_d]
-                _cdi_s = cdi_suave[_d] if _d in cdi_suave.index else _cdi_a
-                _diag_cdi.append(
-                    f"{_d.strftime('%b/%Y')}: Selic={_cdi_a:.2f}% a.a. | suave={_cdi_s:.2f}%"
-                )
-            for _linha in _diag_cdi:
-                st.markdown(f"<span style='font-family:monospace;font-size:11px'>{_linha}</span>",
-                            unsafe_allow_html=True)
-            st.caption(f"Último mês na série: {cdi_anual_bruto.index[-1].strftime('%b/%Y')} "
-                       f"· Hoje: {pd.Timestamp.today().strftime('%d/%b/%Y')} "
-                       f"· Total de meses: {len(cdi_anual_bruto)}")
+        st.plotly_chart(fig_cj, width="stretch")
 
         # ── Cards de estatísticas dos ciclos ──────────────────────────────────
         ciclos_corte = [c for c in ciclos if c["tipo"] == "Corte"]
@@ -6624,8 +6607,7 @@ with tab14:
                        cfg["w"]*100)/100 for cfg in ASSET_CFG}
         tem_custom_cj = abs(sum(custom_w_cj.values()) - 1.0) < 0.02
 
-        rets_ativos_cj = {cfg["name"]: (series[cfg["name"]]["valor"]
-            .pct_change().dropna().reindex(common_idx).ffill().fillna(0))
+        rets_ativos_cj = {cfg["name"]: (RETS_MENSAIS[cfg["name"]])
             for cfg in ASSET_CFG}
         ret_cust_cj = (sum(custom_w_cj[a["name"]] * rets_ativos_cj[a["name"]]
                        for a in ASSET_CFG) if tem_custom_cj else None)
@@ -6681,7 +6663,7 @@ with tab14:
                     pior = ranking[-1]
                     linhas.append({"": f"🔴 {pior[0]}", "Retorno médio": f"{pior[1]:+.1f}%"})
                 df_l = pd.DataFrame(linhas).set_index("")
-                st.dataframe(df_l, use_container_width=True)
+                st.dataframe(df_l, width="stretch")
 
         # ── Detalhe por ciclo (expansível, opcional) ──────────────────────────
         with st.expander("📋 Ver detalhe de cada ciclo individual", expanded=False):
@@ -6712,7 +6694,7 @@ with tab14:
                     if r_a is not None:
                         linhas_d.append({"Ativo/Carteira": cfg["name"], "Retorno": f"{r_a:+.1f}%"})
                 st.dataframe(pd.DataFrame(linhas_d).set_index("Ativo/Carteira"),
-                             use_container_width=True)
+                             width="stretch")
 
         # ══════════════════════════════════════════════════════════════════════
         # ── CORRELAÇÕES ────────────────────────────────────────────────────────
@@ -6758,7 +6740,7 @@ with tab14:
             yaxis=dict(autorange="reversed", tickfont=dict(color="#444441", size=10),
                        color="#1a1a18"),
         )
-        st.plotly_chart(fig_corr, use_container_width=True)
+        st.plotly_chart(fig_corr, width="stretch")
 
         # ── Insight automático: pares mais e menos correlacionados ─────────────
         pares = []
@@ -6951,7 +6933,7 @@ with tab14:
                            tickfont=dict(color="#444441"), color="#1a1a18"),
                 yaxis=dict(tickfont=dict(color="#444441", size=11), color="#1a1a18"),
             )
-            st.plotly_chart(fig_sens, use_container_width=True)
+            st.plotly_chart(fig_sens, width="stretch")
             mais_sens = max(sens_data, key=lambda x: x[1])
             st.caption(
                 f"**{mais_sens[0]}** é o mais beneficiado por cortes — rende cerca de "
@@ -7023,7 +7005,7 @@ with tab14:
                         "Mais rápida": "—", "Mais lenta": "—",
                     })
             st.dataframe(pd.DataFrame(rec_rows).set_index("Carteira"),
-                         use_container_width=True)
+                         width="stretch")
             st.caption(
                 "Recuperação = meses do início do ciclo de alta até a carteira voltar ao "
                 "valor inicial. 'Não caiu' significa que a carteira foi resiliente ao aperto monetário."
@@ -7074,7 +7056,7 @@ with tab14:
                     emoji_r = "🟢" if m >= 0 else "🔴"
                     linhas_t.append({"": f"{emoji_r} {nome}", "6m": f"{m:+.1f}%"})
                 st.dataframe(pd.DataFrame(linhas_t).set_index(""),
-                             use_container_width=True)
+                             width="stretch")
 
         st.caption(
             "Ciclos detectados pela variação do CDI (média móvel 3m, limiar 0.15 p.p., "
@@ -7093,8 +7075,7 @@ with tab15:
     # ── Montar matriz de retornos dos ativos ──────────────────────────────────
     ret_dict_mk = {}
     for cfg in ASSET_CFG:
-        r = (series[cfg["name"]]["valor"].pct_change().dropna()
-             .reindex(common_idx).ffill().fillna(0))
+        r = (RETS_MENSAIS[cfg["name"]])
         ret_dict_mk[cfg["name"]] = r
     ret_df_mk = pd.DataFrame(ret_dict_mk).dropna()
 
@@ -7248,7 +7229,7 @@ with tab15:
                 yaxis=dict(title="Retorno anual (%)", gridcolor="#e8e6e0",
                            tickfont=dict(color="#444441"), color="#1a1a18"),
             )
-            st.plotly_chart(fig_mk, use_container_width=True)
+            st.plotly_chart(fig_mk, width="stretch")
 
             # ── Composição da carteira escolhida ──────────────────────────────
             st.markdown("#### 4. Composição da carteira Markowitz escolhida")
@@ -7264,7 +7245,7 @@ with tab15:
                         "Δ vs HRP": f"{(peso - w_hrp_arr[i]*100):+.1f}%",
                     })
             df_comp_mk = pd.DataFrame(comp_rows).set_index("Ativo")
-            st.dataframe(df_comp_mk, use_container_width=True)
+            st.dataframe(df_comp_mk, width="stretch")
 
             # Gráfico de barras da composição
             fig_comp_mk = go.Figure()
@@ -7284,7 +7265,7 @@ with tab15:
                 yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
                            tickfont=dict(color="#444441"), color="#1a1a18"),
             )
-            st.plotly_chart(fig_comp_mk, use_container_width=True)
+            st.plotly_chart(fig_comp_mk, width="stretch")
 
             # ── Botão para aplicar e comparação final ─────────────────────────
             if st.button("💾 Usar esta carteira Markowitz nas outras abas",
@@ -7324,7 +7305,7 @@ with tab15:
                     "Retorno a.a.": f"{r_cust*100:.2f}%",
                     "Vol a.a.": f"{v_cust*100:.2f}%", "Sharpe": f"{s_cust:.3f}"})
             st.dataframe(pd.DataFrame(comp_final).set_index("Modelo"),
-                         use_container_width=True)
+                         width="stretch")
 
             # Insight
             melhor_sharpe = max([("HRP+BL", s_hrp), ("Markowitz", s_esc)] +
@@ -7436,7 +7417,7 @@ with tab15:
                                 yaxis=dict(title="Base 100", gridcolor="#e8e6e0",
                                            tickfont=dict(color="#444441"), color="#1a1a18"),
                             )
-                            st.plotly_chart(fig_oos, use_container_width=True)
+                            st.plotly_chart(fig_oos, width="stretch")
 
                             # ── Tabela comparativa out-of-sample ──
                             linhas_oos = [
@@ -7461,7 +7442,7 @@ with tab15:
                                      "Max DD": f"{perf_cust['dd']:.1f}%",
                                      "Sharpe": f"{perf_cust['sharpe']:.3f}"})
                             st.dataframe(pd.DataFrame(linhas_oos).set_index("Modelo"),
-                                         use_container_width=True)
+                                         width="stretch")
 
                             # ── Veredito automático ──
                             if perf_hrp["sharpe"] > perf_mk["sharpe"]:
@@ -7515,8 +7496,7 @@ with tab16:
     # ── Matriz de retornos e correlação ───────────────────────────────────────
     ret_stress_dict = {}
     for cfg in ASSET_CFG:
-        r = (series[cfg["name"]]["valor"].pct_change().dropna()
-             .reindex(common_idx).ffill().fillna(0))
+        r = (RETS_MENSAIS[cfg["name"]])
         ret_stress_dict[cfg["name"]] = r
     ret_stress_df = pd.DataFrame(ret_stress_dict).dropna()
     corr_stress = ret_stress_df.corr()
@@ -7735,7 +7715,7 @@ with tab16:
                 "Impacto na carteira": f"{contrib_perda:+.2f}%",
             })
         df_stress = pd.DataFrame(rows_stress).set_index("Ativo")
-        st.dataframe(df_stress, use_container_width=True)
+        st.dataframe(df_stress, width="stretch")
 
         # ── Insight automático ────────────────────────────────────────────────
         imp_dir_hrp = impacto_direto(w_hrp_s)
@@ -7810,8 +7790,7 @@ with tab17:
         # Montar matriz de retornos
         ret_est_dict = {}
         for cfg in ASSET_CFG:
-            r = (series[cfg["name"]]["valor"].pct_change().dropna()
-                 .reindex(common_idx).ffill().fillna(0))
+            r = (RETS_MENSAIS[cfg["name"]])
             ret_est_dict[cfg["name"]] = r
         ret_est_df = pd.DataFrame(ret_est_dict).dropna()
 
@@ -7879,7 +7858,7 @@ with tab17:
                     yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
                                tickfont=dict(color="#444441", size=9), color="#1a1a18"),
                 )
-                st.plotly_chart(fig_hrp, use_container_width=True)
+                st.plotly_chart(fig_hrp, width="stretch")
 
             # Markowitz
             with col_g2:
@@ -7900,7 +7879,7 @@ with tab17:
                     yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
                                tickfont=dict(color="#444441", size=9), color="#1a1a18"),
                 )
-                st.plotly_chart(fig_mk, use_container_width=True)
+                st.plotly_chart(fig_mk, width="stretch")
 
             # ── Tabela de estabilidade (desvio-padrão de cada peso) ────────────
             st.markdown("#### Estabilidade por ativo — quanto o peso oscilou")
@@ -7919,7 +7898,7 @@ with tab17:
                 }
                 rows_est.append(linha)
             df_est = pd.DataFrame(rows_est).set_index("Ativo")
-            st.dataframe(df_est, use_container_width=True)
+            st.dataframe(df_est, width="stretch")
 
             # ── Turnover médio (quanto muda a cada recálculo) ──────────────────
             st.markdown("#### Turnover — quanto você rebalancearia a cada recálculo")
@@ -8029,7 +8008,7 @@ with tab17:
                                                    "🔴 Baixa"),
                             })
                     df_boot = pd.DataFrame(boot_rows).set_index("Ativo")
-                    st.dataframe(df_boot, use_container_width=True)
+                    st.dataframe(df_boot, width="stretch")
 
                     # Gráfico: barras com intervalo de confiança
                     fig_boot = go.Figure()
@@ -8049,7 +8028,7 @@ with tab17:
                         yaxis=dict(title="Peso (%)", ticksuffix="%", gridcolor="#e8e6e0",
                                    tickfont=dict(color="#444441"), color="#1a1a18"),
                     )
-                    st.plotly_chart(fig_boot, use_container_width=True)
+                    st.plotly_chart(fig_boot, width="stretch")
 
                     # Insight
                     desvios = {c["name"]: pd.Series(pesos_boot[c["name"]]).std() for c in ASSET_CFG}
@@ -8069,7 +8048,6 @@ with tab17:
                     )
       except Exception as _e_estab:
         st.error(f"Erro ao calcular estabilidade: {_e_estab}")
-        import traceback
         st.code(traceback.format_exc())
 
 
@@ -8105,8 +8083,7 @@ with tab18:
             # ── Preparar retornos das carteiras ───────────────────────────────
             ret_macro_dict = {}
             for cfg in ASSET_CFG:
-                r = (series[cfg["name"]]["valor"].pct_change().dropna()
-                     .reindex(common_idx).ffill().fillna(0))
+                r = (RETS_MENSAIS[cfg["name"]])
                 ret_macro_dict[cfg["name"]] = r
             ret_macro_df = pd.DataFrame(ret_macro_dict).dropna()
 
@@ -8180,7 +8157,7 @@ with tab18:
                                           "Estrutura pode derivar no tempo — monitorar"),
                     })
             df_adf = pd.DataFrame(adf_rows).set_index("Ativo")
-            st.dataframe(df_adf, use_container_width=True)
+            st.dataframe(df_adf, width="stretch")
 
             n_estac = sum(1 for r in adf_rows if "Sim" in r["Estacionário?"])
             if n_estac == len(adf_rows):
@@ -8224,7 +8201,7 @@ with tab18:
                 yaxis=dict(title="Retorno médio (%)", ticksuffix="%", gridcolor="#e8e6e0",
                            zerolinecolor="#888780", tickfont=dict(color="#444441"), color="#1a1a18"),
             )
-            st.plotly_chart(fig_sazon, use_container_width=True)
+            st.plotly_chart(fig_sazon, width="stretch")
 
             # Insight de sazonalidade do HRP
             hrp_mes = ret_hrp_macro.groupby(ret_hrp_macro.index.month).mean() * 100
@@ -8258,7 +8235,7 @@ with tab18:
                         "Lag 12 meses": f"{ac12:+.2f}" if not pd.isna(ac12) else "—",
                     })
             df_autocorr = pd.DataFrame(autocorr_rows).set_index("Carteira")
-            st.dataframe(df_autocorr, use_container_width=True)
+            st.dataframe(df_autocorr, width="stretch")
             st.caption("Autocorrelação perto de 0 = retornos praticamente independentes (ideal "
                        "para um modelo que não aposta em timing). Valores fortes (>0,2 ou <−0,2) "
                        "indicariam padrão explorável — raro em carteiras diversificadas.")
@@ -8304,7 +8281,7 @@ with tab18:
                 xaxis=dict(side="top", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
                 yaxis=dict(autorange="reversed", tickfont=dict(color="#444441", size=11), color="#1a1a18"),
             )
-            st.plotly_chart(fig_macro, use_container_width=True)
+            st.plotly_chart(fig_macro, width="stretch")
 
             # Insight: maior exposição do HRP
             if "HRP+BL" in df_corr_macro.columns:
@@ -8344,7 +8321,7 @@ with tab18:
                         linha[nome_c] = "—"
                 beta_rows.append(linha)
             df_beta_macro = pd.DataFrame(beta_rows).set_index("Fator")
-            st.dataframe(df_beta_macro, use_container_width=True)
+            st.dataframe(df_beta_macro, width="stretch")
             st.caption("Beta positivo = carteira sobe quando o fator sobe. "
                        "Para inflação/juros, o fator é a variação em p.p.; para "
                        "petróleo/VIX/dólar, é o retorno % do fator.")
@@ -8386,7 +8363,7 @@ with tab18:
                     yaxis=dict(title=f"Correlação móvel ({janela_corr}m)", range=[-1,1],
                                gridcolor="#e8e6e0", tickfont=dict(color="#444441"), color="#1a1a18"),
                 )
-                st.plotly_chart(fig_din, use_container_width=True)
+                st.plotly_chart(fig_din, width="stretch")
                 st.caption(f"Correlação móvel de {janela_corr} meses entre o HRP+BL e {fator_din}. "
                            f"Linhas vermelhas pontilhadas = eventos de cauda. "
                            f"Quando a linha sobe/desce muito, a relação mudou — prova de que "
@@ -8418,7 +8395,7 @@ with tab18:
                     "Vol BAIXA": f"{r_baixa.std()*np.sqrt(12)*100:.1f}%" if len(r_baixa) else "—",
                 })
             df_reg_macro = pd.DataFrame(reg_rows).set_index("Carteira")
-            st.dataframe(df_reg_macro, use_container_width=True)
+            st.dataframe(df_reg_macro, width="stretch")
             st.caption(f"Comportamento das carteiras quando {fator_reg} está acima (ALTA) vs "
                        f"abaixo (BAIXA) da sua variação mediana. Mostra em qual ambiente macro "
                        f"cada carteira performa melhor.")
@@ -8503,7 +8480,6 @@ with tab18:
             )
       except Exception as _e_macro:
         st.error(f"Erro na análise macro: {_e_macro}")
-        import traceback
         st.code(traceback.format_exc())
 
 
