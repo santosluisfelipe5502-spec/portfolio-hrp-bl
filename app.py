@@ -410,6 +410,39 @@ def markowitz_target_vol(returns_df, target_vol_annual, allow_short=False):
     w = np.clip(res.x, 0, 1)
     return w / w.sum()
 
+def projetar_bandas(w_ref, bandas, cov_mensal, vol_min, vol_max):
+    """Encontra os pesos mais próximos do HRP que respeitam, AO MESMO TEMPO:
+    as bandas min/max de cada ativo, soma = 100% e a volatilidade alvo do perfil.
+    A distância é ponderada pelo próprio peso HRP, então o ajuste se distribui
+    proporcionalmente ao HRP (um ativo com peso HRP pequeno recebe pouco).
+    Retorna (pesos_dict, vol_anual_%, alvo_de_vol_atingido)."""
+    nomes = [a["name"] for a in ASSET_CFG]
+    lo = np.array([bandas.get(n, (0.0, 100.0))[0] / 100 for n in nomes])
+    hi = np.array([bandas.get(n, (0.0, 100.0))[1] / 100 for n in nomes])
+    ref = np.array([float(w_ref.get(n, 0.0)) for n in nomes])
+    den = np.maximum(ref, 0.005)
+    vol = lambda w: float(np.sqrt(max(w @ cov_mensal @ w, 0) * 12) * 100)
+    dist = lambda w: float((((w - ref) ** 2) / den).sum())
+    soma = {"type": "eq", "fun": lambda w: w.sum() - 1}
+    cons = [soma,
+            {"type": "ineq", "fun": lambda w: vol_max - vol(w)},
+            {"type": "ineq", "fun": lambda w: vol(w) - vol_min}]
+    x0 = np.clip(ref, lo, hi)
+    x0 = x0 / x0.sum() if x0.sum() > 0 else np.ones(len(nomes)) / len(nomes)
+    bnds = list(zip(lo, hi))
+    res = minimize(dist, x0, method="SLSQP", bounds=bnds, constraints=cons,
+                   options={"maxiter": 500, "ftol": 1e-12})
+    ok_vol = bool(res.success)
+    if not ok_vol:
+        # Alvo de vol inviável com estas bandas: respeita as bandas e fica o mais
+        # perto possível do alvo.
+        pen = lambda w: dist(w) + 1e3 * (max(0, vol(w) - vol_max) + max(0, vol_min - vol(w))) ** 2
+        res = minimize(pen, x0, method="SLSQP", bounds=bnds, constraints=[soma],
+                       options={"maxiter": 500})
+    w = np.clip(res.x, lo, hi)
+    w = w / w.sum()
+    return {n: float(x) for n, x in zip(nomes, w)}, vol(w), ok_vol
+
 def ledoit_wolf_shrinkage(returns_df):
     """Encolhe a matriz de covariância em direção a um alvo estruturado (Ledoit-Wolf).
     Reduz o ruído de estimação, deixando a covariância mais estável — especialmente
@@ -872,7 +905,11 @@ def to_monthly(df):
     # Se já tem menos de 2 observações por mês em média, já é mensal
     dias_total = (df.index[-1] - df.index[0]).days
     if dias_total > 0 and len(df) / (dias_total / 30) < 1.5:
-        return df  # já é mensal
+        # Já é mensal: só padroniza a data para o último dia do mês
+        # (planilhas como SPY.xlsx vêm com o 1º dia, o que quebrava o alinhamento)
+        df = df.copy()
+        df.index = pd.to_datetime(df.index) + pd.offsets.MonthEnd(0)
+        return df[~df.index.duplicated(keep="last")].sort_index()
     return df.resample("ME").last()
 
 
@@ -1507,39 +1544,14 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
             # HRP irrestrito como ponto de partida
             w_hrp_raw = compute_hrp(ret_df_perfil)
 
-            # Aplicar restrições de banda do perfil
-            bandas = perfil_cfg["bandas"]
-            w_clip = {}
-            for a in ASSET_CFG:
-                nome = a["name"]
-                w_min, w_max = bandas.get(nome, (0.0, 100.0))
-                # float() garante cópia independente do array read-only
-                w_raw = float(w_hrp_raw.get(nome, a["w"]))
-                w_clip[nome] = float(np.clip(w_raw, w_min/100, w_max/100))
-
-            # Renormalizar para somar 1
-            total_w = sum(w_clip.values())
-            pesos_perfil = {k: float(v/total_w) for k, v in w_clip.items()}
-
-            # Verificar restrição de volatilidade
-            w_arr = np.array([float(pesos_perfil[a["name"]]) for a in ASSET_CFG],
-                              dtype=float)
-            cov_p = ret_df_perfil.cov().values.copy()
-            vol_perfil_calc = float(np.sqrt(w_arr @ cov_p @ w_arr) * np.sqrt(12) * 100)
-
-            # Se volatilidade fora da banda, ajustar via scaling
-            vol_min_p = perfil_cfg["vol_min"]
-            vol_max_p = perfil_cfg["vol_max"]
-            if vol_perfil_calc > vol_max_p:
-                fator = vol_max_p / vol_perfil_calc
-                pesos_ajust = {k: float(v) for k, v in pesos_perfil.items()}
-                for nome in ["Ibovespa","Internac.","Bitcoin","Ouro","IDkA Pré 5A","IMA-B5","IMA-B5+"]:
-                    pesos_ajust[nome] = pesos_ajust.get(nome, 0) * fator
-                excesso = 1.0 - sum(pesos_ajust.values())
-                pesos_ajust["IDA-DI"] = pesos_ajust.get("IDA-DI",0) + excesso * 0.7
-                pesos_ajust["IHFA"]   = pesos_ajust.get("IHFA",0)   + excesso * 0.3
-                total_w2 = sum(pesos_ajust.values())
-                pesos_perfil = {k: float(v/total_w2) for k, v in pesos_ajust.items()}
+            # Aplicar bandas e vol alvo do perfil (respeitados simultaneamente)
+            pesos_perfil, vol_perfil_calc, vol_ok_perfil = projetar_bandas(
+                w_hrp_raw, perfil_cfg["bandas"], ret_df_perfil.cov().values,
+                perfil_cfg["vol_min"], perfil_cfg["vol_max"])
+            if not vol_ok_perfil:
+                st.info(f"ℹ️ Perfil {perfil_sel}: a vol alvo de {perfil_cfg['vol_min']}–"
+                        f"{perfil_cfg['vol_max']}% não é alcançável dentro das bandas com os "
+                        f"dados atuais. Usando a carteira mais próxima: vol {vol_perfil_calc:.2f}% a.a.")
 
         except Exception as e_perfil:
             # Fallback: usar pesos padrão HRP
