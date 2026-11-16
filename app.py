@@ -1037,8 +1037,8 @@ PERFIS = {
         "bandas": {a["name"]: (0.0, 100.0) for a in ASSET_CFG},
     },
     "Conservador": {
-        "vol_min": 0.5, "vol_max": 1.0,
-        "desc": "Vol alvo 0.5%-1.0% a.a. | CDI + 0.3% a 0.8%",
+        "vol_min": 1.5, "vol_max": 2.5,
+        "desc": "Vol alvo 1.5%-2.5% a.a. | CDI + 0.3% a 0.8%",
         "cor": "#1D9E75",
         "bandas": {
             "IDkA Pré 5A": (0.0,  8.0),
