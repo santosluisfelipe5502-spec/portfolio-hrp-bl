@@ -1038,7 +1038,7 @@ PERFIS = {
     },
     "Conservador": {
         "vol_min": 1.5, "vol_max": 2.5,
-        "desc": "Vol alvo 1.5%-2.5% a.a. | CDI + 0.3% a 0.8%",
+        "desc": "Vol alvo 1.5%–2.5% a.a.",
         "cor": "#1D9E75",
         "bandas": {
             "IDkA Pré 5A": (0.0,  8.0),
@@ -1055,7 +1055,7 @@ PERFIS = {
     },
     "Moderado": {
         "vol_min": 2.0, "vol_max": 3.5,
-        "desc": "Vol alvo 2%-3.5% a.a. | CDI + 1% a 2%",
+        "desc": "Vol alvo 2.0%–3.5% a.a.",
         "cor": "#C4770A",
         "bandas": {
             "IDkA Pré 5A": (8.0, 24.0),
@@ -1072,7 +1072,7 @@ PERFIS = {
     },
     "Agressivo": {
         "vol_min": 5.0, "vol_max": 12.0,
-        "desc": "Vol alvo acima de 5% a.a. | CDI + 2% a 4%",
+        "desc": "Vol alvo 5.0%–12.0% a.a.",
         "cor": "#E24B4A",
         "bandas": {
             "IDkA Pré 5A": (5.0,  16.0),
@@ -1106,13 +1106,16 @@ with st.sidebar:
     perfil_cfg = PERFIS[perfil_sel]
     cor_perfil = perfil_cfg["cor"]
 
-    st.markdown(
-        f"<div style='font-size:12px;padding:6px 10px;border-radius:6px;"
-        f"background:{hex_to_rgba(cor_perfil,0.13)};border-left:3px solid {cor_perfil};"
-        f"color:{cor_perfil};margin-top:4px'>"
-        f"{perfil_cfg['desc']}</div>",
-        unsafe_allow_html=True
-    )
+    def _render_desc_perfil(extra=""):
+        _box_perfil.markdown(
+            f"<div style='font-size:12px;padding:6px 10px;border-radius:6px;"
+            f"background:{hex_to_rgba(cor_perfil,0.13)};border-left:3px solid {cor_perfil};"
+            f"color:{cor_perfil};margin-top:4px'>"
+            f"{perfil_cfg['desc']}{extra}</div>",
+            unsafe_allow_html=True
+        )
+    _box_perfil = st.empty()
+    _render_desc_perfil()
     st.divider()
 
     # ── Fontes de dados (automáticas) ─────────────────────────────────────────
@@ -1594,6 +1597,13 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
 
     rf_ann = m_port["rf_ann"]
 
+    # Descrição do perfil na sidebar com o resultado histórico real (não uma promessa fixa)
+    _dif_cdi_hist = (m_port["ann_ret"] - rf_ann) * 100
+    _pct_cdi_hist = m_port["ann_ret"] / rf_ann * 100 if rf_ann > 0 else float("nan")
+    _render_desc_perfil(
+        f"<br><span style='font-size:11px'>Histórico: vol {m_port['ann_vol']*100:.2f}% a.a. · "
+        f"CDI {_dif_cdi_hist:+.2f}% a.a. · {_pct_cdi_hist:.0f}% do CDI</span>")
+
     # ── IPCA puro ─────────────────────────────────────────────────────────────
     # IPCA mensal via API BCB (série 433) ou fallback com média histórica
     ipca_raw = fetch_ipca()
@@ -1794,8 +1804,10 @@ _ann_ret_ipca  = (1 + ipca_ret.mean())**12 - 1  # IPCA anualizado
 _premio_ipca   = (_ann_ret_port - _ann_ret_ipca) * 100  # prêmio vs IPCA em p.p.
 _premio_cdi    = (_ann_ret_port - rf_ann) * 100          # prêmio vs CDI em p.p.
 
-def kpi(label, value, sub="", cls="", sub2=""):
+def kpi(label, value, sub="", cls="", sub2="", sub3=""):
     s2 = f'<div class="metric-sub" style="margin-top:2px">{sub2}</div>' if sub2 else ""
+    if sub3:
+        s2 += f'<div class="metric-sub" style="margin-top:2px">{sub3}</div>'
     return (
         '<div class="metric-card">'
         f'<div class="metric-label">{label}</div>'
@@ -1805,6 +1817,10 @@ def kpi(label, value, sub="", cls="", sub2=""):
         '</div>'
     )
 
+def pct_cdi(ret, ret_cdi):
+    """Retorno como % do CDI (ex.: 105% do CDI). Funciona para acumulado ou a.a."""
+    return f"{ret / ret_cdi * 100:.0f}% do CDI" if ret_cdi > 0 else ""
+
 # ── Linha 1: HRP+BL original ──
 st.markdown("<div style='font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;"
             "color:#378ADD;margin-bottom:6px'>HRP + Black-Litterman</div>", unsafe_allow_html=True)
@@ -1812,11 +1828,13 @@ k1,k2,k3,k4,k5,k6,k7 = st.columns(7)
 k1.markdown(kpi("Acumulado", f"+{acum_port:.1f}%",
     f"CDI +{acum_cdi:.1f}%",
     "pos",
-    sub2=f"IPCA +{(port_cum.iloc[-1]/ipca6_cum.iloc[-1]-1)*100:.1f}% acum."
+    sub2=f"IPCA +{(port_cum.iloc[-1]/ipca6_cum.iloc[-1]-1)*100:.1f}% acum.",
+    sub3=pct_cdi(acum_port, acum_cdi)
 ), unsafe_allow_html=True)
 k2.markdown(kpi("Retorno a.a.", f"{m_port['ann_ret']*100:.2f}%",
-    f"CDI + {_premio_cdi:.2f}% a.a.",
-    sub2=f"IPCA + {_premio_ipca:.2f}% a.a."
+    f"CDI {_premio_cdi:+.2f}% a.a.",
+    sub2=f"IPCA {_premio_ipca:+.2f}% a.a.",
+    sub3=pct_cdi(m_port["ann_ret"], rf_ann)
 ), unsafe_allow_html=True)
 k3.markdown(kpi("Volatilidade a.a.", f"{m_port['ann_vol']*100:.2f}%", f"IBOV {m_ibov['ann_vol']*100:.1f}%", "good"), unsafe_allow_html=True)
 cls_sharpe = "pos" if m_port["sharpe"] > 0.2 else "warn" if m_port["sharpe"] > 0 else "neg"
@@ -1853,15 +1871,17 @@ if custom_valid_hdr:
     _acum_ipca_c   = (c_cum.iloc[-1]/ipca6_cum.iloc[-1]-1)*100
 
     ck1.markdown(kpi("Acumulado", f"+{acum_cust:.1f}%",
-        f"CDI + {_premio_cdi_c:.2f}% a.a.",
+        f"CDI {_premio_cdi_c:+.2f}% a.a.",
         "pos" if acum_cust >= acum_port else "warn",
-        sub2=f"IPCA + {_premio_ipca_c:.2f}% a.a."
+        sub2=f"IPCA {_premio_ipca_c:+.2f}% a.a.",
+        sub3=pct_cdi(acum_cust, acum_cdi)
     ), unsafe_allow_html=True)
     diff_ret = (m_cust["ann_ret"] - m_port["ann_ret"])*100
     ck2.markdown(kpi("Retorno a.a.", f"{m_cust['ann_ret']*100:.2f}%",
-        f"CDI + {_premio_cdi_c:.2f}% a.a.",
+        f"CDI {_premio_cdi_c:+.2f}% a.a.",
         "pos" if diff_ret >= 0 else "warn",
-        sub2=f"IPCA + {_premio_ipca_c:.2f}% a.a."
+        sub2=f"IPCA {_premio_ipca_c:+.2f}% a.a.",
+        sub3=pct_cdi(m_cust["ann_ret"], rf_ann)
     ), unsafe_allow_html=True)
     diff_vol = (m_cust["ann_vol"] - m_port["ann_vol"])*100
     cls_vol = "pos" if diff_vol <= 0 else "warn"
@@ -1913,10 +1933,12 @@ if st.session_state.get("mk_port_ret") is not None:
         _acum_mk = (_m_mk["cum"].iloc[-1]-1)*100
         _premio_cdi_mk = (_m_mk["ann_ret"] - rf_ann)*100
         mk1.markdown(kpi("Acumulado", f"+{_acum_mk:.1f}%",
-            f"CDI + {_premio_cdi_mk:.2f}% a.a.",
-            "pos" if _acum_mk >= acum_port else "warn"), unsafe_allow_html=True)
+            f"CDI {_premio_cdi_mk:+.2f}% a.a.",
+            "pos" if _acum_mk >= acum_port else "warn",
+            sub3=pct_cdi(_acum_mk, ((1 + _mk_cdi).prod() - 1) * 100)), unsafe_allow_html=True)
         mk2.markdown(kpi("Retorno a.a.", f"{_m_mk['ann_ret']*100:.2f}%",
-            f"HRP+BL {(_m_mk['ann_ret']-m_port['ann_ret'])*100:+.1f}%"), unsafe_allow_html=True)
+            f"HRP+BL {(_m_mk['ann_ret']-m_port['ann_ret'])*100:+.1f}%",
+            sub3=pct_cdi(_m_mk["ann_ret"], _m_mk["rf_ann"])), unsafe_allow_html=True)
         _cls_vol_mk = "good" if _m_mk["ann_vol"] <= m_port["ann_vol"] else "warn"
         mk3.markdown(kpi("Volatilidade a.a.", f"{_m_mk['ann_vol']*100:.2f}%",
             f"HRP+BL {m_port['ann_vol']*100:.1f}%", _cls_vol_mk), unsafe_allow_html=True)
