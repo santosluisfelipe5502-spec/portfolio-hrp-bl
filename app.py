@@ -1691,8 +1691,14 @@ try:
             _avisos_dados.append(
                 f"**{nome}**: apenas {len(s)} observações (mín. recomendado: 24) — "
                 f"métricas menos confiáveis")
-        # 3. Valores suspeitos: retornos mensais extremos (> 50% num mês para RF, pode ser erro)
+        # 3. Valores suspeitos: retorno mensal > 15% em renda fixa.
+        #    Só olha a janela usada nos cálculos — antes dela a série não entra em nada
+        #    (ex.: IDkA Pré 5A +19% em dez/2008 é real: rali pós-crise, distribuído dia a dia).
         rets_check = s.pct_change().dropna()
+        try:
+            rets_check = rets_check[rets_check.index >= common_idx[0]]
+        except Exception:
+            pass
         if len(rets_check) > 0:
             extremos = rets_check[(rets_check.abs() > 0.80)]
             # Bitcoin/Ouro podem ter movimentos grandes; renda fixa não
