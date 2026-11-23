@@ -4076,6 +4076,7 @@ with tab5:
     fonte_premissas = st.radio(
         "Fonte das premissas macro",
         ["✍️ Minhas premissas", "🏦 Projeções Itaú BBA"],
+        index=1 if _proj_bba is not None else 0,   # padrão: projeções Itaú BBA
         horizontal=True,
         key="fonte_premissas_cen",
         help="Escolha entre definir as premissas manualmente ou usar as projeções "
@@ -4088,7 +4089,9 @@ with tab5:
         ano_bba = st.selectbox(
             "Ano da projeção BBA",
             anos_bba,
-            index=min(1, len(anos_bba)-1),  # default: próximo ano se existir
+            # padrão: o próximo ano-calendário (ou o último disponível)
+            index=next((i for i, a in enumerate(anos_bba) if int(a) > pd.Timestamp.today().year),
+                       len(anos_bba) - 1),
             key="ano_bba_cen",
             help="Horizonte da projeção. O BBA projeta vários anos à frente."
         )
