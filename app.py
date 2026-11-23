@@ -417,6 +417,69 @@ def faixa_vol_txt(cfg):
     return f"{cfg['vol_min']:.1f}%–{cfg['vol_max']:.1f}%"
 
 
+def bl_sobre_hrp(w_base, cov_anual, q_total, rf, confianca, bandas,
+                 desvio_max, vol_max, sharpe_ref=0.3, tau=0.05):
+    """Black-Litterman usando a carteira HRP do perfil como equilíbrio.
+
+    1) Retornos implícitos: o prêmio sobre o CDI que cada ativo precisaria ter
+       para a carteira HRP ser a ótima (Pi = delta·Sigma·w). delta é calibrado
+       para a carteira HRP ter Sharpe = sharpe_ref.
+    2) Visões: retornos do cenário menos o CDI do cenário (mesma escala de Pi).
+       A confiança c (0–1) define a incerteza das visões: Omega = (1/c − 1)·tau·Sigma,
+       o que dá a forma simples  retorno BL = implícito + c × (visão − implícito).
+    3) Pesos: maximiza retorno BL − (delta/2)·variância, respeitando as bandas do
+       perfil, o desvio máximo por ativo vs. HRP e a vol máxima do perfil.
+       Sem visões (confiança 0), o resultado é exatamente a carteira HRP.
+    Retornos em % a.a.; pesos em fração."""
+    nomes = [a["name"] for a in ASSET_CFG]
+    w = np.array([float(w_base.get(n, 0.0)) for n in nomes])
+    w = w / w.sum()
+    S = np.asarray(cov_anual, dtype=float)
+    vol_p = float(np.sqrt(max(w @ S @ w, 1e-12)))
+    delta = sharpe_ref / vol_p
+    pi = delta * S @ w                                   # prêmio implícito (fração)
+    q = np.array([q_total.get(n, rf) for n in nomes]) / 100 - rf / 100
+    c = float(np.clip(confianca, 0.01, 0.99))
+    tS = tau * S
+    omega = (1 / c - 1) * tS
+    mu = pi + tS @ np.linalg.solve(tS + omega, q - pi)  # prêmio BL = pi + c·(q − pi)
+
+    obj = lambda x: -(x @ mu - delta / 2 * x @ S @ x)
+    soma = {"type": "eq", "fun": lambda x: x.sum() - 1}
+    # Final: bandas do perfil ∩ desvio máximo vs HRP ∩ vol máxima do perfil
+    lo = np.array([bandas.get(n, (0, 100))[0] / 100 for n in nomes])
+    hi = np.array([bandas.get(n, (0, 100))[1] / 100 for n in nomes])
+    lo_b, hi_b = lo.copy(), hi.copy()
+    lo = np.maximum(lo, w - desvio_max / 100); hi = np.minimum(hi, w + desvio_max / 100)
+    lo = np.minimum(lo, w); hi = np.maximum(hi, w)        # garante que o HRP é viável
+    cons = [soma]
+    if vol_max < 99:
+        cons.append({"type": "ineq",
+                     "fun": lambda x: max(vol_max / 100, vol_p) - np.sqrt(max(x @ S @ x, 0))})
+    r_f = minimize(obj, w, method="SLSQP", bounds=list(zip(lo, hi)),
+                   constraints=cons, options={"maxiter": 500, "ftol": 1e-12})
+    w_fin = np.clip(r_f.x if r_f.success else w, lo, hi); w_fin = w_fin / w_fin.sum()
+    to_dict = lambda v: {n: float(x) for n, x in zip(nomes, v)}
+    # Qual limite segurou cada peso (para explicar o resultado)
+    limite = {}
+    for i, n in enumerate(nomes):
+        if abs(w_fin[i] - w[i]) < 5e-4:
+            limite[n] = ""
+        elif min(abs(w_fin[i] - lo_b[i]), abs(w_fin[i] - hi_b[i])) < 5e-4:
+            limite[n] = "banda do perfil"
+        elif abs(abs(w_fin[i] - w[i]) - desvio_max / 100) < 5e-4:
+            limite[n] = f"desvio máx. ±{desvio_max:.1f}"
+        else:
+            limite[n] = ""
+    return {
+        "ret_implicito": to_dict(rf + pi * 100), "visao": to_dict(rf + q * 100),
+        "ret_bl": to_dict(rf + mu * 100), "w_hrp": to_dict(w),
+        "w_final": to_dict(w_fin), "limite": limite,
+        "vol_hrp": vol_p * 100, "vol_final": float(np.sqrt(w_fin @ S @ w_fin)) * 100,
+        "delta": delta,
+    }
+
+
 def projetar_bandas(w_ref, bandas, cov_mensal, vol_min, vol_max):
     """Encontra os pesos mais próximos do HRP que respeitam, AO MESMO TEMPO:
     as bandas min/max de cada ativo, soma = 100% e a volatilidade alvo do perfil.
@@ -2548,11 +2611,12 @@ Combina o equilíbrio histórico do mercado com visões táticas do investidor u
 estatística Bayesiana. O resultado é um vetor de retornos esperados que incorpora
 tanto o que os dados históricos dizem quanto o que você acredita que vai acontecer.
 
-**Como funciona na prática:**
-- Parte dos retornos de equilíbrio (pesos HRP × covariância)
-- Incorpora visões táticas (cenários macro que você define)
-- Combina os dois com peso proporcional à sua confiança
-- Resultado: retornos esperados ajustados que alimentam o HRP
+**Como funciona na prática (aba Cenários):**
+- Parte do que a carteira HRP do perfil "assume" de retorno para cada ativo
+- Compara com as visões do cenário macro que você escolhe
+- Combina os dois: retorno BL = assumido + confiança × (visão − assumido)
+- Ajusta os pesos dentro das bandas do perfil, com desvio máximo por ativo
+- Resultado: um ajuste fino da carteira HRP, não uma carteira nova
             """)
 
         st.markdown("""
@@ -4452,211 +4516,149 @@ with tab5:
         st.caption("Contribuição = peso × retorno esperado do ativo no cenário. "
                    "Diferenças mostram onde os pesos customizados apostam diferente do HRP+BL.")
 
-    # ── Forma 2: BL Dinâmico — sugestão de pesos ─────────────────────────────
+    # ── Forma 2: HRP + Black-Litterman — ajuste tático da carteira do perfil ──
     st.divider()
-    st.markdown("### 🎯 Black-Litterman Dinâmico — Sugestão de pesos para este cenário")
+    st.markdown("### 🎯 HRP + Black-Litterman — ajuste tático da carteira")
+    _base_nome = "HRP+BL Original" if perfil_sel == "HRP+BL Original" else f"HRP do perfil {perfil_sel}"
     st.markdown(
-        "O modelo usa os retornos esperados deste cenário como **visões táticas** do Black-Litterman, "
-        "combina com o equilíbrio histórico HRP e sugere uma nova alocação ótima. "
-        "Quanto maior a confiança, mais os pesos se afastam do HRP original em direção ao cenário."
+        f"Parte da carteira **{_base_nome}** e ajusta os pesos pelas visões deste cenário "
+        f"(**{preset}**), em três passos:\n\n"
+        "1. **Estrutura (HRP):** a carteira neutra do perfil, construída só com risco e correlação.\n"
+        "2. **O que o HRP assume × o que você espera:** o retorno que cada ativo precisaria ter "
+        "para a carteira HRP ser a ótima, lado a lado com o retorno do cenário. "
+        "O Black-Litterman combina os dois conforme a sua confiança.\n"
+        "3. **Ajuste controlado:** novos pesos dentro das bandas do perfil, com desvio máximo "
+        "por ativo em relação ao HRP e respeitando a vol máxima do perfil."
     )
+    col_bl1, col_bl2, col_bl3 = st.columns([2, 2, 1.4])
+    conf_bl = col_bl1.slider(
+        "Confiança nas visões do cenário", 0.0, 1.0, 0.25, 0.05, key="bl_conf",
+        help="0 = ignora o cenário (fica no HRP) · 1 = segue o cenário ao máximo dentro dos limites. "
+             "O estudo de market timing indica usar confiança baixa.")
+    desv_bl = col_bl2.slider(
+        "Desvio máximo por ativo vs. HRP (p.p.)", 1.0, 10.0, 5.0, 0.5, key="bl_desvio",
+        help="Limita quanto cada peso pode se afastar da carteira HRP. "
+             "Mantém o BL como ajuste fino, não como aposta.")
+    col_bl3.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    if col_bl3.button("▶ Calcular", key="btn_bl_dyn", type="primary"):
+        try:
+            _ativos = [a["name"] for a in ASSET_CFG]
+            _ret_df = pd.DataFrame({a: RETS_MENSAIS[a] for a in _ativos}).dropna()
+            _base = WEIGHTS if perfil_sel == "HRP+BL Original" else _pesos_display
+            st.session_state["bl_res"] = dict(
+                bl_sobre_hrp(_base, _ret_df.cov().values * 12, asset_rets, selic,
+                             conf_bl, perfil_cfg["bandas"], desv_bl, perfil_cfg["vol_max"]),
+                perfil=perfil_sel, cenario=preset, conf=conf_bl, desvio=desv_bl, selic=selic)
+        except Exception as e:
+            st.session_state.pop("bl_res", None)
+            st.error(f"Erro no cálculo HRP + BL: {e}")
 
-    col_bl1, col_bl2 = st.columns(2)
-    tau_bl = col_bl1.slider(
-        "Nível de confiança nas visões do cenário",
-        min_value=0.0, max_value=1.0, value=0.5, step=0.05,
-        help="0 = ignora o cenário (mantém HRP puro) | 1 = segue totalmente o cenário"
-    )
-    rodar_bl = col_bl2.button("▶ Calcular pesos BL para este cenário", key="btn_bl_dyn", type="primary")
+    _bl = st.session_state.get("bl_res")
+    if _bl:
+        if _bl["perfil"] != perfil_sel or _bl["cenario"] != preset:
+            st.warning(f"Resultado calculado para o perfil **{_bl['perfil']}** e o cenário "
+                       f"**{_bl['cenario']}**. Clique em ▶ Calcular para atualizar.")
+        _ativos = [a["name"] for a in ASSET_CFG]
 
-    if rodar_bl:
-        with st.spinner("Calculando Black-Litterman dinâmico..."):
-            try:
-                # ── Montar retornos históricos ──
-                ret_dict_bl = {}
-                for cfg in ASSET_CFG:
-                    r = series[cfg["name"]]["valor"].pct_change().dropna()
-                    r = r.reindex(common_idx).ffill().dropna()
-                    ret_dict_bl[cfg["name"]] = r
-                ret_df_bl = pd.DataFrame(ret_dict_bl).dropna()
+        # Passo 2 — o que o HRP assume × visão × BL
+        st.markdown("#### Passo 2 — O que o HRP assume × o que o cenário espera")
+        _ord = sorted(_ativos, key=lambda a: _bl["visao"][a] - _bl["ret_implicito"][a])
+        fig_ass = go.Figure()
+        for a in _ord:
+            fig_ass.add_trace(go.Scatter(
+                x=[_bl["ret_implicito"][a], _bl["visao"][a]], y=[a, a], mode="lines",
+                line=dict(color="rgba(136,135,128,0.45)", width=3),
+                showlegend=False, hoverinfo="skip"))
+        for nome_s, chave, cor, simb in [
+                ("O que o HRP assume", "ret_implicito", "#888780", "circle"),
+                ("Visão do cenário", "visao", "#E24B4A", "diamond"),
+                (f"Black-Litterman (confiança {_bl['conf']:.0%})", "ret_bl", "#378ADD", "circle")]:
+            fig_ass.add_trace(go.Scatter(
+                x=[_bl[chave][a] for a in _ord], y=_ord, mode="markers", name=nome_s,
+                marker=dict(color=cor, size=11, symbol=simb, line=dict(color="white", width=1)),
+                hovertemplate="%{y}: %{x:.2f}% a.a.<extra>" + nome_s + "</extra>"))
+        fig_ass.add_vline(x=_bl["selic"], line=dict(color="#444441", dash="dot", width=1),
+                          annotation_text=f"CDI {_bl['selic']:.2f}%", annotation_position="top")
+        fig_ass.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4", height=380,
+            font=dict(color="#1a1a18"), margin=dict(l=0, r=0, t=30, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="left", x=0),
+            xaxis=dict(ticksuffix="%", gridcolor="#e8e6e0", title="Retorno esperado (% a.a.)"),
+            yaxis=dict(gridcolor="#e8e6e0"))
+        st.plotly_chart(fig_ass, width="stretch")
+        st.caption(
+            "Cinza = retorno que a carteira HRP implicitamente assume para cada ativo "
+            f"(Sharpe de referência 0,3 sobre o CDI). Vermelho = retorno do cenário. "
+            "Azul = combinação do Black-Litterman. Quanto maior a linha entre cinza e vermelho, "
+            "mais o cenário discorda da carteira neutra. Ativos ordenados do maior pessimismo "
+            "(topo) ao maior otimismo (base) do cenário em relação ao HRP.")
 
-                # ── Covariância histórica ──
-                cov_bl = ret_df_bl.cov() * 12  # anualizar
+        # Passo 3 — pesos
+        st.markdown("#### Passo 3 — Pesos ajustados")
+        rows_bl = []
+        for a in _ativos:
+            wh, wf = _bl["w_hrp"][a] * 100, _bl["w_final"][a] * 100
+            d = wf - wh
+            rows_bl.append({
+                "Ativo": a,
+                "Ret. HRP assume": f"{_bl['ret_implicito'][a]:.2f}%",
+                "Visão cenário": f"{_bl['visao'][a]:.2f}%",
+                "Ret. BL": f"{_bl['ret_bl'][a]:.2f}%",
+                "Peso HRP": f"{wh:.1f}%",
+                "Peso final": f"{wf:.1f}%",
+                "Δ (p.p.)": f"{d:+.1f}",
+                "Ação": "⬆️ Aumentar" if d > 0.5 else "⬇️ Reduzir" if d < -0.5 else "✅ Manter",
+                "Parou no limite": _bl["limite"].get(a, ""),
+            })
+        st.dataframe(pd.DataFrame(rows_bl).set_index("Ativo"), width="stretch")
+        st.caption(
+            "**Ret. BL** = o que o HRP assume + confiança × (visão − o que o HRP assume). "
+            "**Parou no limite** mostra os ativos em que o ajuste foi contido pela banda do perfil "
+            f"ou pelo desvio máximo de ±{_bl['desvio']:.1f} p.p. — sem esses limites, o otimizador "
+            "concentraria a carteira, o mesmo defeito do Markowitz puro.")
 
-                # ── Retornos de equilíbrio (Pi = delta * Sigma * w) ──
-                delta_bl = 2.5  # aversão ao risco de mercado
-                w_hrp_bl = np.array([WEIGHTS.get(a["name"], 0) for a in ASSET_CFG])
-                ativos_bl = [a["name"] for a in ASSET_CFG]
-                cov_np    = cov_bl.loc[ativos_bl, ativos_bl].values
-                pi_bl     = delta_bl * cov_np @ w_hrp_bl  # retornos de equilíbrio
+        _ret_h = sum(_bl["w_hrp"][a] * asset_rets.get(a, 0) for a in _ativos)
+        _ret_f = sum(_bl["w_final"][a] * asset_rets.get(a, 0) for a in _ativos)
+        _giro = sum(abs(_bl["w_final"][a] - _bl["w_hrp"][a]) for a in _ativos) / 2 * 100
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Retorno no cenário — HRP", f"{_ret_h:.2f}%", delta=f"{_ret_h - selic:+.2f}% vs CDI")
+        k2.metric("Retorno no cenário — ajustado", f"{_ret_f:.2f}%", delta=f"{_ret_f - _ret_h:+.2f}% vs HRP")
+        k3.metric("Vol estimada", f"{_bl['vol_final']:.2f}%", delta=f"{_bl['vol_final'] - _bl['vol_hrp']:+.2f}% vs HRP",
+                  delta_color="inverse")
+        k4.metric("Giro necessário", f"{_giro:.1f}%", help="Soma das mudanças de peso ÷ 2")
 
-                # ── Visões do cenário (Q = retornos esperados por ativo) ──
-                q_bl = np.array([asset_rets.get(a, 0) / 100 for a in ativos_bl])
+        fig_bl = go.Figure()
+        fig_bl.add_trace(go.Bar(x=_ativos, y=[_bl["w_hrp"][a] * 100 for a in _ativos],
+                                name="HRP", marker_color="rgba(136,135,128,0.6)"))
+        fig_bl.add_trace(go.Bar(x=_ativos, y=[_bl["w_final"][a] * 100 for a in _ativos],
+                                name="Ajustado pelo BL", marker_color="rgba(55,138,221,0.85)"))
+        fig_bl.update_layout(
+            plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4", height=280, barmode="group",
+            font=dict(color="#1a1a18"), margin=dict(l=0, r=0, t=8, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            xaxis=dict(gridcolor="#e8e6e0"), yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0"))
+        st.plotly_chart(fig_bl, width="stretch")
 
-                # ── Matriz de visões P (identidade — visão sobre cada ativo) ──
-                P_bl = np.eye(len(ativos_bl))
+        # Disponibiliza para o Monte Carlo
+        for a in _ativos:
+            st.session_state[f"bl_dyn_{a}"] = round(_bl["w_final"][a] * 100, 1)
+        st.session_state["bl_dyn_scenario"] = _bl["cenario"]
 
-                # ── Incerteza das visões (Omega proporcional à variância) ──
-                tau_sigma = (1 - tau_bl + 0.01) * cov_np  # tau controla confiança
-                omega_bl  = np.diag(np.diag(P_bl @ tau_sigma @ P_bl.T))
+        def _aplicar_bl():
+            r = st.session_state.get("bl_res") or {}
+            for a, w in r.get("w_final", {}).items():
+                st.session_state[f"rebal_{a}"] = round(w * 100, 1)
+            st.session_state["bl_aplicado"] = r.get("cenario")
 
-                # ── Fórmula BL ──
-                # E[R] = [(tau*Sigma)^-1 + P'*Omega^-1*P]^-1 * [(tau*Sigma)^-1*Pi + P'*Omega^-1*Q]
-                tau_sigma_inv = np.linalg.inv(tau_sigma + np.eye(len(ativos_bl))*1e-8)
-                omega_inv     = np.linalg.inv(omega_bl + np.eye(len(ativos_bl))*1e-8)
-
-                M1 = tau_sigma_inv + P_bl.T @ omega_inv @ P_bl
-                M2 = tau_sigma_inv @ pi_bl + P_bl.T @ omega_inv @ q_bl
-
-                er_bl = np.linalg.solve(M1, M2)  # retornos ajustados BL
-
-                # ── Rodar HRP com retornos BL ajustados ──
-                # Ajustar matriz de covariância pelos novos retornos esperados
-                er_series = pd.Series(er_bl, index=ativos_bl)
-
-                # Calcular pesos pelo inverso da variância ajustada pelo retorno BL
-                var_ajustada = pd.Series({
-                    a: max(cov_np[i,i], 1e-6) / max(er_bl[i]**2, 1e-6)
-                    for i, a in enumerate(ativos_bl)
-                })
-                # Normalizar
-                w_bl_raw = 1 / var_ajustada
-                w_bl_raw = w_bl_raw / w_bl_raw.sum()
-
-                # Combinar com HRP original pela confiança
-                w_hrp_s  = pd.Series(w_hrp_bl, index=ativos_bl)
-                w_bl_fin = (tau_bl * w_bl_raw + (1-tau_bl) * w_hrp_s)
-                w_bl_fin = w_bl_fin / w_bl_fin.sum()
-
-                # ── Retorno esperado com novos pesos ──
-                ret_bl_port = sum(w_bl_fin[a] * asset_rets.get(a, 0)
-                                  for a in ativos_bl)
-                ret_hrp_port = sum(WEIGHTS.get(a, 0) * asset_rets.get(a, 0)
-                                   for a in ativos_bl)
-
-                # ── Exibir resultado ──
-                st.markdown("#### Pesos sugeridos pelo BL Dinâmico")
-
-                rows_bl = []
-                for cfg in ASSET_CFG:
-                    nome   = cfg["name"]
-                    w_orig = _pesos_display.get(cfg["name"], cfg["w"]) * 100
-                    w_novo = w_bl_fin.get(nome, 0) * 100
-                    r_esp  = asset_rets.get(nome, 0)
-                    delta  = w_novo - w_orig
-                    rows_bl.append({
-                        "Ativo":          nome,
-                        "Cluster":        cfg["cluster"],
-                        "Ret. esperado":  f"{r_esp:.2f}%",
-                        "Peso HRP atual": f"{w_orig:.1f}%",
-                        "Peso BL novo":   f"{w_novo:.1f}%",
-                        "Δ Peso":         f"{delta:+.1f}%",
-                        "Ação":           "⬆️ Aumentar" if delta > 1.0 else
-                                          "⬇️ Reduzir"  if delta < -1.0 else
-                                          "✅ Manter",
-                    })
-                df_bl = pd.DataFrame(rows_bl).set_index("Ativo")
-                st.dataframe(df_bl, width="stretch")
-
-                # KPIs comparativos
-                k1, k2, k3 = st.columns(3)
-                k1.metric("Retorno HRP+BL original", f"{ret_hrp_port:.2f}%",
-                           delta=f"{ret_hrp_port-selic:+.2f}% vs CDI")
-                k2.metric("Retorno BL Dinâmico",     f"{ret_bl_port:.2f}%",
-                           delta=f"{ret_bl_port-selic:+.2f}% vs CDI")
-                k3.metric("Ganho do rebalanceamento", f"{ret_bl_port-ret_hrp_port:+.2f}%",
-                           delta="vs HRP original")
-
-                # Gráfico comparativo de pesos
-                fig_bl = go.Figure()
-                fig_bl.add_trace(go.Bar(
-                    x=ativos_bl,
-                    y=[cfg["w"]*100 for cfg in ASSET_CFG],
-                    name="HRP+BL original",
-                    marker_color="rgba(55,138,221,0.7)",
-                ))
-                fig_bl.add_trace(go.Bar(
-                    x=ativos_bl,
-                    y=[w_bl_fin.get(a,0)*100 for a in ativos_bl],
-                    name=f"BL Dinâmico (confiança {tau_bl:.0%})",
-                    marker_color="rgba(29,158,117,0.7)",
-                ))
-                fig_bl.update_layout(
-                    plot_bgcolor="#f8f7f4", paper_bgcolor="#f8f7f4",
-                    height=280, barmode="group",
-                    font=dict(color="#1a1a18"),
-                    margin=dict(l=0,r=0,t=8,b=0),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                                xanchor="left", x=0, font=dict(color="#1a1a18")),
-                    xaxis=dict(gridcolor="#e8e6e0",
-                               tickfont=dict(color="#444441",size=11), color="#1a1a18"),
-                    yaxis=dict(ticksuffix="%", gridcolor="#e8e6e0",
-                               tickfont=dict(color="#444441",size=11), color="#1a1a18"),
-                )
-                st.plotly_chart(fig_bl, width="stretch")
-
-                # Botão para aplicar como customizado
-                pesos_str = " | ".join([
-                    f"{a}: {w_bl_fin.get(a,0)*100:.1f}%"
-                    for a in ativos_bl
-                ])
-                st.code(pesos_str, language=None)
-                st.caption(
-                    "💡 Para aplicar: copie os valores acima e insira nos campos "
-                    "da aba Rebalanceamento. O portfólio customizado será recalculado "
-                    "automaticamente em todas as abas."
-                )
-
-                # Salvar pesos BL no session_state para uso no Monte Carlo
-                for a in ativos_bl:
-                    st.session_state[f"bl_dyn_{a}"] = round(w_bl_fin.get(a,0)*100, 1)
-                st.session_state["bl_dyn_scenario"] = preset
-                st.success(
-                    f"✅ Pesos BL calculados para o cenário **{preset}** "
-                    f"com confiança de **{tau_bl:.0%}**. "
-                    f"Disponíveis para uso no Monte Carlo."
-                )
-
-                # ── Botão para aplicar pesos ao portfólio customizado ─────────
-                st.divider()
-                st.markdown("#### Aplicar pesos ao portfólio customizado")
-                st.markdown(
-                    "Clique no botão abaixo para transferir os pesos sugeridos "
-                    "diretamente para o portfólio customizado. "
-                    "Todas as abas serão atualizadas automaticamente."
-                )
-
-                col_ap1, col_ap2 = st.columns([1, 2])
-                with col_ap1:
-                    if st.button("✅ Aplicar pesos BL ao portfólio", 
-                                  key="btn_aplicar_bl", type="primary"):
-                        # Transferir pesos BL para os campos de rebalanceamento
-                        for a in ativos_bl:
-                            peso_bl = round(w_bl_fin.get(a, 0) * 100, 1)
-                            st.session_state[f"rebal_{a}"] = peso_bl
-                        st.success(
-                            f"✅ Pesos aplicados! O portfólio customizado agora "
-                            f"reflete o cenário **{preset}**. "
-                            f"Navegue para outras abas para ver o impacto."
-                        )
-                        st.balloons()
-                with col_ap2:
-                    # Mostrar resumo dos pesos que serão aplicados
-                    st.markdown(
-                        "<div style='font-size:12px;padding:8px 12px;border-radius:6px;"
-                        "background:#f8f7f4;border-left:3px solid #378ADD'>"
-                        "<strong>Pesos que serão aplicados:</strong><br>" +
-                        " | ".join([
-                            f"<strong>{a}</strong>: {w_bl_fin.get(a,0)*100:.1f}%"
-                            for a in ativos_bl
-                        ]) +
-                        "</div>",
-                        unsafe_allow_html=True
-                    )
-
-            except Exception as e:
-                st.error(f"Erro no cálculo BL Dinâmico: {e}")
-
+        st.button("✅ Aplicar pesos ajustados ao portfólio customizado", key="btn_aplicar_bl",
+                  on_click=_aplicar_bl)
+        if st.session_state.get("bl_aplicado"):
+            st.success(f"Pesos do cenário **{st.session_state['bl_aplicado']}** aplicados ao "
+                       "portfólio customizado. As demais abas já refletem a mudança.")
+        st.caption(
+            "💡 As visões do BL são, na essência, timing tático. O estudo de market timing mostrou "
+            "que inclinações táticas raramente pagam os custos; por isso o padrão é confiança baixa "
+            "e desvio limitado — o BL como ajuste fino, não como motor de giro.")
 
 # ── Tab 6: Eventos de cauda ───────────────────────────────────────────────────
 with tab6:
