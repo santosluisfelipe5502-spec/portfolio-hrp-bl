@@ -410,6 +410,13 @@ def markowitz_target_vol(returns_df, target_vol_annual, allow_short=False):
     w = np.clip(res.x, 0, 1)
     return w / w.sum()
 
+def faixa_vol_txt(cfg):
+    """Texto da faixa de vol alvo: 'até 1.7%' quando não há mínimo, senão '2.0%–3.5%'."""
+    if cfg["vol_min"] <= 0:
+        return f"até {cfg['vol_max']:.1f}%"
+    return f"{cfg['vol_min']:.1f}%–{cfg['vol_max']:.1f}%"
+
+
 def projetar_bandas(w_ref, bandas, cov_mensal, vol_min, vol_max):
     """Encontra os pesos mais próximos do HRP que respeitam, AO MESMO TEMPO:
     as bandas min/max de cada ativo, soma = 100% e a volatilidade alvo do perfil.
@@ -1037,8 +1044,8 @@ PERFIS = {
         "bandas": {a["name"]: (0.0, 100.0) for a in ASSET_CFG},
     },
     "Conservador": {
-        "vol_min": 1.5, "vol_max": 2.5,
-        "desc": "Vol alvo 1.5%–2.5% a.a.",
+        "vol_min": 0.0, "vol_max": 1.7,
+        "desc": "Vol alvo até 1.7% a.a.",
         "cor": "#1D9E75",
         "bandas": {
             "IDkA Pré 5A": (0.0,  8.0),
@@ -1552,8 +1559,8 @@ with st.spinner("Carregando dados e conectando ao Banco Central…"):
                 w_hrp_raw, perfil_cfg["bandas"], ret_df_perfil.cov().values,
                 perfil_cfg["vol_min"], perfil_cfg["vol_max"])
             if not vol_ok_perfil:
-                st.info(f"ℹ️ Perfil {perfil_sel}: a vol alvo de {perfil_cfg['vol_min']}–"
-                        f"{perfil_cfg['vol_max']}% não é alcançável dentro das bandas com os "
+                st.info(f"ℹ️ Perfil {perfil_sel}: a vol alvo de {faixa_vol_txt(perfil_cfg)}"
+                        f" não é alcançável dentro das bandas com os "
                         f"dados atuais. Usando a carteira mais próxima: vol {vol_perfil_calc:.2f}% a.a.")
 
         except Exception as e_perfil:
@@ -3645,7 +3652,7 @@ with tab4:
             f"margin-bottom:1rem'>"
             f"<strong style='color:{cor_perfil}'>Perfil {perfil_sel}</strong> — "
             f"pesos calculados com restrição de volatilidade "
-            f"{perfil_cfg['vol_min']:.1f}%–{perfil_cfg['vol_max']:.1f}% a.a.: "
+            f"{faixa_vol_txt(perfil_cfg)} a.a.: "
             + " | ".join([f"<strong>{a['name']}</strong> {pesos_perfil.get(a['name'],a['w'])*100:.1f}%"
                           for a in ASSET_CFG])
             + "</div>",
@@ -3882,7 +3889,7 @@ with tab4:
             st.info(
                 f"📊 Volatilidade calculada do perfil **{perfil_sel}**: "
                 f"**{vol_v:.2f}% a.a.** "
-                f"(alvo: {perfil_cfg['vol_min']:.1f}% – {perfil_cfg['vol_max']:.1f}%)"
+                f"(alvo: {faixa_vol_txt(perfil_cfg)})"
             )
         except Exception:
             pass
