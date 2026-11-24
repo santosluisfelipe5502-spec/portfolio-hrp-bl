@@ -5273,6 +5273,29 @@ with tab7:
     anos_cols   = list(df_heat.index)
     ativos_list = list(df_heat.columns)
 
+    # ── Ordenação escolhida pelo usuário ──────────────────────────────────────
+    _ann_ord = {a: (lambda s2: (s2.prod() ** (1 / len(s2)) - 1) * 100 if len(s2) else np.nan)
+                (df_heat[a].dropna() / 100 + 1) for a in ativos_list}
+    _vol_ord = {a: (df_heat[a].dropna().std() if df_heat[a].dropna().size > 1 else np.nan)
+                for a in ativos_list}
+    _op_ord = (["Ordem padrão", "Retorno anualizado (Ann.)", "Volatilidade (Vol.)"]
+               + [f"Ano {a}" for a in sorted(anos_cols, reverse=True)])
+    _c_o1, _c_o2 = st.columns([2, 1])
+    _ord_por = _c_o1.selectbox("Ordenar ativos por", _op_ord, key="heat_ordem")
+    _ord_dir = _c_o2.radio("Sentido", ["Maior → menor", "Menor → maior"],
+                           horizontal=True, key="heat_sentido",
+                           disabled=_ord_por == "Ordem padrão")
+    if _ord_por != "Ordem padrão":
+        if _ord_por.startswith("Retorno"):
+            _chave = pd.Series(_ann_ord)
+        elif _ord_por.startswith("Volatilidade"):
+            _chave = pd.Series(_vol_ord)
+        else:
+            _chave = df_heat.loc[int(_ord_por.split()[-1])]
+        _chave = _chave.reindex(ativos_list)
+        ativos_list = list(_chave.sort_values(ascending=_ord_dir.startswith("Menor"),
+                                              na_position="last").index)
+
     # ── Paleta de ranking ─────────────────────────────────────────────────────
     CORES_RANK = [
         "#1a3a5c", "#2255a4", "#2e72c4", "#5b9ad5",
